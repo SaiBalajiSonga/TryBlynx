@@ -118,7 +118,7 @@ services:
     container_name: tryblynx-app
     restart: unless-stopped
     ports:
-      - "${SERVER_PORT:-8080}:8080"
+      - "8080:8080"
     environment:
       DATABASE_URL: "postgres://${POSTGRES_USER:-tryblynx}:${POSTGRES_PASSWORD:-tryblynx}@postgres:5432/${POSTGRES_DB:-tryblynx}?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
