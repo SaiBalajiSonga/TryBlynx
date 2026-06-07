@@ -297,6 +297,7 @@ func (s *Store) GetFeedPosts(ctx context.Context, cursor time.Time, limit int) (
 		if err != nil {
 			return nil, fmt.Errorf("db: failed to scan feed post: %w", err)
 		}
+		author.Interests = []string{}
 		p.Author = &author
 		posts = append(posts, p)
 	}
