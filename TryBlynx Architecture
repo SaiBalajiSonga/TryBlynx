@@ -1,0 +1,563 @@
+# Project TryBlynx — Implementation Plan
+
+## Goal
+
+Build a production-grade, zero-cost-infrastructure chat and social platform targeting **10,000–20,000 concurrent WebSocket connections**. The system uses **Go WebSockets** for real-time messaging, **Redis** for state/Pub-Sub, **PostgreSQL** for persistence (own instance, not Supabase — no 200-connection ceiling), **WebRTC + Coturn** for video, and **Stripe** for VIP payments. Every WebSocket connection is JWT-secured; shadowbanned users are silently quarantined; and Stripe webhooks are cryptographically verified. **Backend API only** — no frontend UI generated.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Stripe Keys**: The webhook endpoint and checkout session creation require your Stripe Secret Key and Webhook Signing Secret. These will be read from environment variables (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`). You will need a Stripe account and test-mode keys.
+
+> [!IMPORTANT]
+> **Coturn / TURN Server**: The plan includes WebRTC signaling via the Go WebSocket server. A Coturn TURN server container is included in Docker Compose for NAT traversal. You may replace this with a hosted TURN provider if preferred.
+
+> [!WARNING]
+> **JWT Secret**: A single symmetric HMAC-SHA256 secret (`JWT_SECRET` env var) is used for signing and verifying tokens. For production, consider rotating secrets or switching to asymmetric RS256 keys.
+
+---
+
+## Resolved Decisions
+
+| # | Question | Decision |
+|---|----------|----------|
+| 1 | Frontend scope | **Backend-only**. User builds client separately. |
+| 2 | Auth method | **Email + bcrypt password**. No OAuth for V1. |
+| 3 | Media uploads | **Text-only** DMs and Feed for V1. |
+| 4 | Rate limiting | **No IP/time rate limiting**. Instead: **Exact-Duplicate Text Filter** in `client.go` — track last sent message, silently drop exact repeats. |
+| 5 | Deployment | **Docker Compose only** — local dev environment. |
+
+---
+
+## Project Directory Structure
+
+```
+c:\Users\JOHNSON\Desktop\TryBlynx\
+├── docker-compose.yml              # Postgres, Redis, Coturn, Go app
+├── .env.example                    # Template for secrets
+├── Dockerfile                      # Multi-stage Go build
+│
+├── db/
+│   ├── migrations/
+│   │   ├── 001_create_users.sql
+│   │   ├── 002_create_messages.sql
+│   │   ├── 003_create_feed.sql
+│   │   └── 004_create_dm_conversations.sql
+│   └── seed.sql                    # Optional dev seed data
+│
+├── cmd/
+│   └── server/
+│       └── main.go                 # Entrypoint — starts HTTP server + matchmaker worker
+│
+├── internal/
+│   ├── config/
+│   │   └── config.go               # Env-var loader (DB, Redis, JWT, Stripe)
+│   │
+│   ├── auth/
+│   │   ├── jwt.go                  # JWT creation & validation (HS256)
+│   │   └── middleware.go           # HTTP middleware: extract user from Bearer token
+│   │
+│   ├── db/
+│   │   ├── pool.go                 # pgxpool connection pool
+│   │   └── queries.go              # Typed SQL helpers
+│   │
+│   ├── redis/
+│   │   └── client.go               # go-redis v9 client + Pub/Sub helpers
+│   │
+│   ├── models/
+│   │   └── models.go               # User, Message, FeedPost, MatchTicket structs
+│   │
+│   ├── api/
+│   │   ├── router.go               # gorilla/mux or chi router setup
+│   │   ├── auth_handlers.go        # POST /api/register, POST /api/login
+│   │   ├── profile_handlers.go     # GET/PUT /api/profile, GET /api/profile/:id
+│   │   ├── feed_handlers.go        # GET/POST /api/feed
+│   │   ├── dm_handlers.go          # GET /api/dm/:conversationId
+│   │   └── stripe_webhook.go       # POST /api/webhook/stripe (signature-verified)
+│   │
+│   ├── ws/
+│   │   ├── hub.go                  # Central Hub: register/unregister/broadcast
+│   │   ├── client.go               # Per-connection read/write pumps
+│   │   ├── upgrader.go             # JWT-secured WebSocket upgrade handler
+│   │   └── handlers.go             # Message routing: chat, DM, signaling, matchmaking
+│   │
+│   ├── matchmaker/
+│   │   ├── ticket.go               # MatchTicket struct + Redis ZSET operations
+│   │   ├── worker.go               # Batch worker goroutine + filter relaxation
+│   │   └── shadowban.go            # Shadowban pool isolation logic
+│   │
+│   └── webrtc/
+│       └── signaling.go            # ICE candidate & SDP relay via WebSocket
+│
+├── go.mod
+└── go.sum
+```
+
+---
+
+## Proposed Changes
+
+### Stream A — Database & State
+
+#### [NEW] [docker-compose.yml](file:///c:/Users/JOHNSON/Desktop/TryBlynx/docker-compose.yml)
+Define four services:
+| Service | Image | Ports | Notes |
+|---------|-------|-------|-------|
+| `postgres` | `postgres:16-alpine` | `5432` | Volume-mounted data dir |
+| `redis` | `redis:7-alpine` | `6379` | Append-only persistence |
+| `coturn` | `coturn/coturn:latest` | `3478/udp`, `5349/tcp` | STUN/TURN with static auth secret |
+| `app` | Built from `./Dockerfile` | `8080` | Depends on postgres, redis |
+
+Environment variables sourced from `.env`.
+
+#### [NEW] [.env.example](file:///c:/Users/JOHNSON/Desktop/TryBlynx/.env.example)
+```
+DATABASE_URL=postgres://echoscale:echoscale@postgres:5432/echoscale?sslmode=disable
+REDIS_URL=redis://redis:6379/0
+JWT_SECRET=change-me-in-production
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+COTURN_SECRET=coturn-static-auth-secret
+SERVER_PORT=8080
+```
+
+#### [NEW] [001_create_users.sql](file:///c:/Users/JOHNSON/Desktop/TryBlynx/db/migrations/001_create_users.sql)
+```sql
+CREATE TABLE users (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username      VARCHAR(32)  UNIQUE NOT NULL,
+    email         VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    display_name  VARCHAR(64),
+    avatar_url    TEXT,
+    bio           TEXT DEFAULT '',
+    gender        VARCHAR(16),           -- 'male','female','other','unspecified'
+    location      VARCHAR(64),           -- ISO 3166 country code or city
+    language      VARCHAR(8),            -- BCP-47 tag
+    interests     TEXT[] DEFAULT '{}',   -- array of interest tags
+    is_vip        BOOLEAN DEFAULT FALSE,
+    shadowbanned  BOOLEAN DEFAULT FALSE,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_users_email ON users(email);
+```
+
+#### [NEW] [002_create_messages.sql](file:///c:/Users/JOHNSON/Desktop/TryBlynx/db/migrations/002_create_messages.sql)
+```sql
+CREATE TABLE conversations (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type       VARCHAR(16) NOT NULL, -- 'dm', 'group', 'random'
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE conversation_members (
+    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
+    user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+    joined_at       TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (conversation_id, user_id)
+);
+
+CREATE TABLE messages (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+    body            TEXT NOT NULL,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_messages_conv ON messages(conversation_id, created_at DESC);
+```
+
+#### [NEW] [003_create_feed.sql](file:///c:/Users/JOHNSON/Desktop/TryBlynx/db/migrations/003_create_feed.sql)
+```sql
+CREATE TABLE feed_posts (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    author_id  UUID REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_feed_created ON feed_posts(created_at DESC);
+```
+
+#### Redis Key Schema
+| Key | Type | Purpose |
+|-----|------|---------|
+| `waiting_pool` | ZSET (score = Unix timestamp of submission) | Active matchmaking queue |
+| `ticket:{userId}` | HASH | Serialized `MatchTicket` (gender, location, language, interests, is_vip, shadowbanned) |
+| `chat:room:{roomId}` | Pub/Sub Channel | Group / random chat message routing |
+| `user:online:{userId}` | STRING (TTL 120s) | Online-presence heartbeat |
+
+---
+
+### Stream B — Security & API
+
+#### [NEW] [config.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/config/config.go)
+Loads all env vars into a typed `Config` struct using `os.Getenv` with validation.
+
+#### [NEW] [jwt.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/auth/jwt.go)
+- `GenerateToken(userID uuid.UUID, isVIP bool, shadowbanned bool) (string, error)` — HS256, 24h expiry. Claims include `sub`, `vip`, `sb`, `exp`, `iat`.
+- `ValidateToken(tokenStr string) (*Claims, error)` — Parses and validates. Returns structured claims.
+
+#### [NEW] [middleware.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/auth/middleware.go)
+- `AuthMiddleware(next http.Handler) http.Handler` — Extracts `Authorization: Bearer <token>`, validates, injects `userID` into `context.Context`.
+
+#### [NEW] [auth_handlers.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/api/auth_handlers.go)
+- `POST /api/register` — bcrypt hash password, insert user, return JWT.
+- `POST /api/login` — Verify credentials, return JWT.
+
+#### [NEW] [profile_handlers.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/api/profile_handlers.go)
+- `GET /api/profile` — Returns the authenticated user's profile.
+- `PUT /api/profile` — Updates gender, location, language, interests, display_name, bio, avatar_url.
+- `GET /api/profile/:id` — Public profile view.
+
+#### [NEW] [feed_handlers.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/api/feed_handlers.go)
+- `GET /api/feed?cursor=<timestamp>&limit=20` — Cursor-paginated global feed.
+- `POST /api/feed` — Create a new feed post (authenticated).
+
+#### [NEW] [stripe_webhook.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/api/stripe_webhook.go)
+Critical security flow:
+
+```go
+func StripeWebhookHandler(w http.ResponseWriter, r *http.Request) {
+    // 1. Read raw body (max 64KB)
+    payload, _ := io.ReadAll(io.LimitReader(r.Body, 65536))
+
+    // 2. Cryptographically verify signature
+    event, err := webhook.ConstructEvent(
+        payload,
+        r.Header.Get("Stripe-Signature"),
+        os.Getenv("STRIPE_WEBHOOK_SECRET"),
+    )
+    // 3. Reject if invalid
+    if err != nil {
+        w.WriteHeader(http.StatusBadRequest)
+        return
+    }
+
+    // 4. Handle checkout.session.completed
+    if event.Type == "checkout.session.completed" {
+        // Extract customer email / metadata user_id
+        // UPDATE users SET is_vip = TRUE WHERE id = $1
+    }
+    w.WriteHeader(http.StatusOK)
+}
+```
+
+> [!CAUTION]
+> The Stripe webhook endpoint must NOT be behind the JWT auth middleware. It receives requests from Stripe's servers, not from authenticated users.
+
+---
+
+### Stream C — Go WebSocket Engine
+
+#### [NEW] [upgrader.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/ws/upgrader.go)
+**JWT-Secured WebSocket Handshake:**
+
+```go
+func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
+    // 1. Extract JWT from query param ?token=xxx OR Authorization header
+    tokenStr := r.URL.Query().Get("token")
+    if tokenStr == "" {
+        tokenStr = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+    }
+
+    // 2. Validate JWT — REJECT if invalid
+    claims, err := auth.ValidateToken(tokenStr)
+    if err != nil {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return  // Connection refused — no upgrade
+    }
+
+    // 3. Upgrade only after successful auth
+    conn, err := upgrader.Upgrade(w, r, nil)
+    if err != nil { return }
+
+    // 4. Create client with authenticated identity
+    client := &Client{
+        Hub:          hub,
+        Conn:         conn,
+        UserID:       claims.UserID,
+        IsVIP:        claims.IsVIP,
+        Shadowbanned: claims.Shadowbanned,
+        Send:         make(chan []byte, 256),
+    }
+    hub.Register <- client
+    go client.WritePump()
+    go client.ReadPump()
+}
+```
+
+#### [NEW] [hub.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/ws/hub.go)
+Central Hub pattern:
+- `Clients map[uuid.UUID]*Client` — all connected clients indexed by UserID.
+- `Rooms map[string]map[*Client]bool` — room memberships.
+- Goroutine loop processes `Register`, `Unregister`, `Broadcast` channels.
+- Integrates with Redis Pub/Sub for horizontal scaling (messages published to Redis are fanned out to local clients).
+
+#### [NEW] [client.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/ws/client.go)
+- `ReadPump()` — reads JSON messages, dispatches to handler by `type` field.
+- `WritePump()` — drains `Send` channel to WebSocket connection. Handles ping/pong keep-alive (54s interval, 60s deadline).
+- Graceful close on disconnect: unregister from hub, remove from matchmaking pool.
+
+#### [NEW] [handlers.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/ws/handlers.go)
+Message routing by `type`:
+
+| `type` | Action |
+|--------|--------|
+| `chat.join` | Subscribe client to `chat:room:{roomId}` Redis channel |
+| `chat.message` | Publish message to Redis channel + persist to `messages` table |
+| `chat.leave` | Unsubscribe from room |
+| `dm.message` | Route directly to target client via Hub, persist to DB |
+| `match.find` | Submit matchmaking ticket (→ Stream D) |
+| `match.cancel` | Remove ticket from waiting pool |
+| `webrtc.offer` / `webrtc.answer` / `webrtc.ice` | Relay SDP/ICE to peer via Hub (→ signaling.go) |
+
+---
+
+### Stream D — The Matchmaker
+
+#### [NEW] [ticket.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/matchmaker/ticket.go)
+
+```go
+type MatchTicket struct {
+    UserID       uuid.UUID
+    Gender       string   // User's own gender
+    TargetGender string   // Desired match gender ("any" if non-VIP)
+    Location     string
+    Language     string
+    Interests    []string
+    IsVIP        bool
+    Shadowbanned bool
+    SubmittedAt  time.Time
+}
+```
+
+- `SubmitTicket(ticket)` — `ZADD waiting_pool <unix_ts> <userID>` + `HSET ticket:{userID} ...`
+- `RemoveTicket(userID)` — `ZREM waiting_pool <userID>` + `DEL ticket:{userID}`
+
+#### [NEW] [worker.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/matchmaker/worker.go)
+**Batch Worker Algorithm (runs as a persistent goroutine):**
+
+```
+every 500ms:
+    1. ZRANGEBYSCORE waiting_pool -inf +inf  →  all ticket userIDs
+    2. Fetch all tickets from Redis HGETALL
+    3. Separate into two pools:
+         normalPool  = tickets where shadowbanned == false
+         shadowPool  = tickets where shadowbanned == true
+    4. For each pool independently:
+         Sort by SubmittedAt (oldest first = highest priority)
+         For each unmatched ticket A:
+             waitDuration = now - A.SubmittedAt
+             For each remaining unmatched ticket B:
+                 if isCompatible(A, B, waitDuration):
+                     MATCH(A, B)
+                     Remove both from waiting_pool
+                     Notify both clients via Hub
+                     break
+```
+
+**Filter Relaxation (Time-Based):**
+
+```go
+func isCompatible(a, b *MatchTicket, waitA, waitB time.Duration) bool {
+    maxWait := max(waitA, waitB)
+
+    // 1. STRICT: Gender filter (VIP-only feature)
+    if a.IsVIP && a.TargetGender != "any" && b.Gender != a.TargetGender {
+        return false
+    }
+    if b.IsVIP && b.TargetGender != "any" && a.Gender != b.TargetGender {
+        return false
+    }
+
+    // 2. RELAXABLE: Interests (drop after 10s)
+    if maxWait < 10*time.Second {
+        if !hasOverlap(a.Interests, b.Interests) {
+            return false
+        }
+    }
+
+    // 3. RELAXABLE: Location (drop after 20s)
+    if maxWait < 20*time.Second {
+        if a.Location != b.Location {
+            return false
+        }
+    }
+
+    // 4. RELAXABLE: Language (drop after 30s)
+    if maxWait < 30*time.Second {
+        if a.Language != b.Language {
+            return false
+        }
+    }
+
+    return true
+}
+```
+
+> [!NOTE]
+> The relaxation thresholds (10s, 20s, 30s) are configurable via environment variables. The order of relaxation (Interests → Location → Language) is per the spec.
+
+#### [NEW] [shadowban.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/internal/matchmaker/shadowban.go)
+- The worker separates the ticket pool into `normalPool` and `shadowPool` **before** matching.
+- Shadowbanned users are never matched with normal users.
+- This is transparent — shadowbanned users see the same UI and get matches (just only with each other).
+
+---
+
+### Infrastructure & Build
+
+#### [NEW] [Dockerfile](file:///c:/Users/JOHNSON/Desktop/TryBlynx/Dockerfile)
+Multi-stage build:
+```dockerfile
+# Stage 1: Build
+FROM golang:1.23-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /echoscale ./cmd/server
+
+# Stage 2: Runtime
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /echoscale /echoscale
+COPY db/migrations /migrations
+EXPOSE 8080
+ENTRYPOINT ["/echoscale"]
+```
+
+#### [NEW] [main.go](file:///c:/Users/JOHNSON/Desktop/TryBlynx/cmd/server/main.go)
+Entrypoint responsibilities:
+1. Load config from env.
+2. Initialize Postgres connection pool (`pgxpool`).
+3. Run DB migrations (embed SQL files or use `golang-migrate`).
+4. Initialize Redis client.
+5. Create WebSocket Hub, start Hub goroutine.
+6. Start Matchmaker worker goroutine.
+7. Register HTTP routes (auth, profile, feed, DM, Stripe webhook, WebSocket upgrade).
+8. Start `http.ListenAndServe` with graceful shutdown (`os.Signal` handler).
+
+---
+
+## Go Module Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `github.com/gorilla/websocket` | WebSocket upgrader |
+| `github.com/go-chi/chi/v5` | HTTP router + middleware chain |
+| `github.com/golang-jwt/jwt/v5` | JWT signing & validation |
+| `github.com/jackc/pgx/v5` | PostgreSQL driver + pool |
+| `github.com/redis/go-redis/v9` | Redis client + Pub/Sub |
+| `github.com/stripe/stripe-go/v81` | Stripe webhook verification + Checkout |
+| `github.com/google/uuid` | UUID handling |
+| `golang.org/x/crypto` | bcrypt password hashing |
+
+---
+
+## Data Flow Diagrams
+
+### Authentication & WebSocket Connection
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as Go HTTP API
+    participant DB as PostgreSQL
+    participant WS as WebSocket Hub
+
+    Client->>API: POST /api/login {email, password}
+    API->>DB: SELECT user WHERE email = ?
+    API->>API: bcrypt.Compare(password, hash)
+    API-->>Client: 200 {token: "eyJ..."}
+
+    Client->>WS: GET /ws?token=eyJ...
+    WS->>WS: auth.ValidateToken(token)
+    alt Invalid Token
+        WS-->>Client: 401 Unauthorized (no upgrade)
+    else Valid Token
+        WS-->>Client: 101 Switching Protocols
+        WS->>WS: hub.Register(client)
+    end
+```
+
+### Matchmaking Flow
+```mermaid
+sequenceDiagram
+    participant A as User A (WebSocket)
+    participant Hub as WS Hub
+    participant R as Redis
+    participant W as Matchmaker Worker
+    participant B as User B (WebSocket)
+
+    A->>Hub: {type: "match.find", preferences: {...}}
+    Hub->>R: ZADD waiting_pool + HSET ticket:A
+
+    Note over W: Worker tick (every 500ms)
+    W->>R: ZRANGEBYSCORE waiting_pool
+    W->>R: HGETALL ticket:A, ticket:B
+    W->>W: Separate normal/shadow pools
+    W->>W: isCompatible(A, B, waitTime)?
+    W->>R: ZREM + DEL tickets
+
+    W->>Hub: NotifyMatch(A, B, roomID)
+    Hub-->>A: {type: "match.found", peer: B, room: "..."}
+    Hub-->>B: {type: "match.found", peer: A, room: "..."}
+```
+
+### Stripe VIP Payment
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as Go API
+    participant Stripe
+    participant DB as PostgreSQL
+
+    Client->>API: POST /api/checkout (authenticated)
+    API->>Stripe: Create Checkout Session
+    Stripe-->>API: session.url
+    API-->>Client: {url: "https://checkout.stripe.com/..."}
+    Client->>Stripe: Complete payment
+
+    Stripe->>API: POST /api/webhook/stripe
+    API->>API: webhook.ConstructEvent(payload, sig, secret)
+    alt Invalid Signature
+        API-->>Stripe: 400 Bad Request
+    else Valid
+        API->>DB: UPDATE users SET is_vip = TRUE WHERE id = ?
+        API-->>Stripe: 200 OK
+    end
+```
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+```bash
+# Unit tests (auth, matchmaker logic, handlers)
+go test ./internal/... -v -race -count=1
+
+# Integration tests (requires Docker Compose up)
+docker compose up -d postgres redis
+go test ./internal/... -v -tags=integration -race
+```
+
+**Key test cases:**
+- `TestJWTRoundTrip` — generate → validate → extract claims.
+- `TestWebSocketRejectsAnonymous` — attempt WS upgrade with no/invalid token → expect 401.
+- `TestStripeWebhookRejectsInvalidSignature` — send a forged payload → expect 400.
+- `TestStripeWebhookUpdatesVIP` — send a correctly signed event → verify `is_vip = true` in DB.
+- `TestMatchmakerBasic` — two compatible tickets → matched within 1 tick.
+- `TestMatchmakerFilterRelaxation` — incompatible interests, but after 10s wait → matched.
+- `TestMatchmakerShadowbanIsolation` — normal + shadowbanned user in pool → never matched together.
+- `TestMatchmakerGenderFilterVIPOnly` — non-VIP with target gender → filter ignored; VIP with target gender → filter enforced.
+
+### Manual Verification
+- Use `wscat` or Postman WebSocket to test the JWT-secured handshake.
+- Use Stripe CLI (`stripe listen --forward-to localhost:8080/api/webhook/stripe`) to test webhook delivery locally.
+- Verify Docker Compose brings up all four services cleanly with `docker compose up --build`.
+- Test matchmaking latency under load with a simple Go load-test script that opens N WebSocket connections and submits match tickets.
