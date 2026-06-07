@@ -1,101 +1,213 @@
 import { useEffect } from 'react';
 import { useWebRTC } from '../lib/useWebRTC';
 import { useWebRTCStore } from '../store/webrtcStore';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, AlertCircle } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, AlertCircle, Wifi } from 'lucide-react';
 
 export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator: boolean }) {
   const { endVideo } = useWebRTCStore();
   const {
-    localVideoRef,
-    remoteVideoRef,
-    isMuted,
-    isVideoOff,
-    error,
-    toggleMute,
-    toggleVideo,
-    initiateCall,
+    localVideoRef, remoteVideoRef,
+    isMuted, isVideoOff, error, connectionState,
+    toggleMute, toggleVideo, initiateCall,
   } = useWebRTC(peerId);
 
   useEffect(() => {
     if (isInitiator) {
-      // Small delay to ensure media is acquired before offering
-      const timer = setTimeout(() => initiateCall(), 500);
+      const timer = setTimeout(() => initiateCall(), 800);
       return () => clearTimeout(timer);
     }
   }, [isInitiator, initiateCall]);
 
+  const stateColor = {
+    connected: 'var(--teal)',
+    connecting: 'var(--yellow)',
+    new: 'var(--yellow)',
+    disconnected: 'var(--red)',
+    failed: 'var(--red)',
+    closed: 'var(--red)',
+  }[connectionState] ?? 'var(--text-muted)';
+
   return (
-    <div className="absolute inset-0 z-50 bg-neutral-950/90 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8">
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 100,
+      background: 'rgba(10,11,15,0.92)',
+      backdropFilter: 'blur(12px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: '24px',
+    }}>
       {error ? (
-        <div className="bg-neutral-900 p-8 rounded-3xl border border-neutral-800 text-center max-w-md w-full">
-          <AlertCircle size={48} className="mx-auto mb-4 text-red-500" />
-          <h3 className="text-xl font-bold text-white mb-2">Camera Access Denied</h3>
-          <p className="text-neutral-400 mb-6">{error}</p>
-          <button 
-            onClick={() => endVideo()}
-            className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-medium py-3 rounded-xl transition-colors"
+        <div style={{
+          background: 'var(--blynx-800)',
+          border: '1px solid var(--border)',
+          borderRadius: '20px',
+          padding: '40px',
+          textAlign: 'center',
+          maxWidth: '380px', width: '100%',
+        }}>
+          <div style={{
+            width: '64px', height: '64px', borderRadius: '50%',
+            background: 'rgba(237,66,69,0.12)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 20px',
+          }}>
+            <AlertCircle size={32} color="#ed4245" />
+          </div>
+          <h3 style={{ margin: '0 0 10px', color: 'white', fontSize: '18px', fontWeight: 700 }}>
+            Camera Access Denied
+          </h3>
+          <p style={{ margin: '0 0 24px', color: 'var(--text-muted)', fontSize: '14px', lineHeight: 1.5 }}>
+            {error}
+          </p>
+          <button
+            onClick={endVideo}
+            className="btn-accent"
+            style={{ width: '100%', padding: '12px' }}
           >
             Close
           </button>
         </div>
       ) : (
-        <div className="w-full max-w-6xl aspect-video bg-neutral-900 rounded-3xl border border-neutral-800 overflow-hidden relative shadow-2xl flex flex-col md:flex-row">
-          
-          {/* Remote Video (Main) */}
-          <div className="flex-1 relative bg-black">
-            <video 
-              ref={remoteVideoRef} 
-              autoPlay 
-              playsInline 
-              className="w-full h-full object-cover"
+        <div style={{
+          width: '100%', maxWidth: '1100px',
+          background: 'var(--blynx-850)',
+          borderRadius: '20px',
+          border: '1px solid var(--border)',
+          overflow: 'hidden',
+          boxShadow: '0 32px 80px rgba(0,0,0,0.6)',
+          display: 'flex',
+          flexDirection: 'column',
+          aspectRatio: '16/9',
+          position: 'relative',
+        }}>
+          {/* Main remote video */}
+          <div style={{ flex: 1, position: 'relative', background: '#000' }}>
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
-            <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 text-white text-sm font-medium flex items-center space-x-2">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Live Partner</span>
+
+            {/* Connection state badge */}
+            <div style={{
+              position: 'absolute', top: '16px', left: '16px',
+              display: 'flex', alignItems: 'center', gap: '6px',
+              background: 'rgba(0,0,0,0.6)',
+              backdropFilter: 'blur(8px)',
+              padding: '5px 10px',
+              borderRadius: '20px',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}>
+              <Wifi size={12} color={stateColor} />
+              <span style={{ fontSize: '12px', color: 'white', fontWeight: 500, textTransform: 'capitalize' }}>
+                {connectionState}
+              </span>
+            </div>
+
+            {/* Local PIP */}
+            <div style={{
+              position: 'absolute', bottom: '16px', right: '16px',
+              width: '160px', aspectRatio: '4/3',
+              borderRadius: '12px',
+              overflow: 'hidden',
+              border: '2px solid rgba(255,255,255,0.15)',
+              background: '#111',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            }}>
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+              {isVideoOff && (
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  background: 'var(--blynx-800)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <VideoOff size={24} color="var(--text-muted)" />
+                </div>
+              )}
+              <div style={{
+                position: 'absolute', bottom: '4px', left: '6px',
+                fontSize: '10px', color: 'rgba(255,255,255,0.7)',
+                fontWeight: 600,
+              }}>
+                You
+              </div>
             </div>
           </div>
 
-          {/* Local Video (PIP or Side) */}
-          <div className="w-full md:w-1/3 border-t md:border-t-0 md:border-l border-neutral-800 bg-neutral-950 relative flex flex-col">
-            <video 
-              ref={localVideoRef} 
-              autoPlay 
-              playsInline 
-              muted 
-              className="flex-1 object-cover w-full bg-black"
+          {/* Controls bar */}
+          <div style={{
+            padding: '16px 24px',
+            background: 'var(--blynx-800)',
+            borderTop: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: '12px',
+          }}>
+            <ControlBtn
+              onClick={toggleMute}
+              active={isMuted}
+              activeColor="rgba(237,66,69,0.2)"
+              activeIconColor="#ed4245"
+              icon={isMuted ? MicOff : Mic}
+              label={isMuted ? 'Unmute' : 'Mute'}
             />
-            
-            {/* Controls */}
-            <div className="p-6 bg-neutral-900 border-t border-neutral-800 flex justify-center space-x-4 items-center">
-              <button 
-                onClick={toggleMute}
-                className={`p-4 rounded-full transition-colors ${
-                  isMuted ? 'bg-red-500/20 text-red-500' : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-                }`}
-              >
-                {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
-              </button>
-              
-              <button 
-                onClick={endVideo}
-                className="p-5 rounded-full bg-red-500 hover:bg-red-600 text-white transition-colors shadow-lg shadow-red-500/20"
-              >
-                <PhoneOff size={28} />
-              </button>
-
-              <button 
-                onClick={toggleVideo}
-                className={`p-4 rounded-full transition-colors ${
-                  isVideoOff ? 'bg-red-500/20 text-red-500' : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-                }`}
-              >
-                {isVideoOff ? <VideoOff size={24} /> : <Video size={24} />}
-              </button>
-            </div>
+            <button
+              onClick={endVideo}
+              style={{
+                width: '52px', height: '52px', borderRadius: '50%',
+                border: 'none', cursor: 'pointer',
+                background: '#ed4245',
+                color: 'white',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 0 20px rgba(237,66,69,0.35)',
+                transition: 'background 0.12s, transform 0.1s',
+              }}
+              title="End Call"
+            >
+              <PhoneOff size={22} />
+            </button>
+            <ControlBtn
+              onClick={toggleVideo}
+              active={isVideoOff}
+              activeColor="rgba(237,66,69,0.2)"
+              activeIconColor="#ed4245"
+              icon={isVideoOff ? VideoOff : Video}
+              label={isVideoOff ? 'Start Cam' : 'Stop Cam'}
+            />
           </div>
-
         </div>
       )}
     </div>
+  );
+}
+
+function ControlBtn({ onClick, active, activeColor, activeIconColor, icon: Icon, label }: {
+  onClick: () => void;
+  active: boolean;
+  activeColor: string;
+  activeIconColor: string;
+  icon: typeof Mic;
+  label: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      style={{
+        width: '44px', height: '44px', borderRadius: '50%',
+        border: 'none', cursor: 'pointer',
+        background: active ? activeColor : 'var(--blynx-600)',
+        color: active ? activeIconColor : 'var(--text-secondary)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'background 0.12s, color 0.12s, transform 0.1s',
+      }}
+    >
+      <Icon size={20} />
+    </button>
   );
 }

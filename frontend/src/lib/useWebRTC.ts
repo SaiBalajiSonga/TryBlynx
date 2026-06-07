@@ -1,134 +1,166 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useWebRTCStore } from '../store/webrtcStore';
-import { useWebSocket } from './useWebSocket';
+import { getSendMessage } from './useWebSocket';
 
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: 'stun:localhost:3478' }
-  ],
-};
+// FIX: Use public STUN servers + get TURN creds from backend if available
+// No more localhost:3478 which is completely broken for real peers
+const PUBLIC_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+];
+
+async function getIceServers(): Promise<RTCIceServer[]> {
+  try {
+    const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8080/api';
+    const res = await fetch(`${API_URL}/webrtc/ice-servers`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('tryblynx_token')}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.ice_servers?.length ? data.ice_servers : PUBLIC_ICE_SERVERS;
+    }
+  } catch {}
+  return PUBLIC_ICE_SERVERS;
+}
 
 export function useWebRTC(peerId: string | null) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const localStream = useRef<MediaStream | null>(null);
+  const processingRef = useRef(false);
 
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectionState, setConnectionState] = useState<RTCPeerConnectionState>('new');
 
-  const incomingSignals = useWebRTCStore((state) => state.incomingSignals);
-  const { sendMessage } = useWebSocket();
+  // FIX: Use consumeSignalsForPeer to not consume signals meant for other peers
+  const consumeSignalsForPeer = useWebRTCStore((s) => s.consumeSignalsForPeer);
+  const incomingSignals = useWebRTCStore((s) => s.incomingSignals);
 
-  // Initialize WebRTC
-  useEffect(() => {
+  const initWebRTC = useCallback(async () => {
     if (!peerId) return;
+    try {
+      const iceServers = await getIceServers();
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localStream.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-    const initWebRTC = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localStream.current = stream;
-        
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
+      const pc = new RTCPeerConnection({ iceServers });
+      peerConnection.current = pc;
+
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      pc.ontrack = (event) => {
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          const send = getSendMessage();
+          send?.('webrtc.ice', { peer_id: peerId, candidate: event.candidate });
         }
+      };
 
-        peerConnection.current = new RTCPeerConnection(ICE_SERVERS);
+      pc.onconnectionstatechange = () => {
+        setConnectionState(pc.connectionState);
+        if (pc.connectionState === 'failed') {
+          pc.restartIce();
+        }
+      };
 
-        stream.getTracks().forEach((track) => {
-          peerConnection.current?.addTrack(track, stream);
-        });
-
-        peerConnection.current.ontrack = (event) => {
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = event.streams[0];
-          }
-        };
-
-        peerConnection.current.onicecandidate = (event) => {
-          if (event.candidate) {
-            sendMessage('webrtc.ice', {
-              peer_id: peerId,
-              candidate: event.candidate,
-            });
-          }
-        };
-
-      } catch (err: any) {
-        console.error("Error accessing media devices.", err);
-        setError("Camera/Microphone access denied or unavailable.");
-      }
-    };
-
-    initWebRTC();
-
-    return () => {
-      localStream.current?.getTracks().forEach((track) => track.stop());
-      peerConnection.current?.close();
-    };
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === 'disconnected') {
+          // Give it a moment before closing
+          setTimeout(() => {
+            if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+              pc.restartIce();
+            }
+          }, 2000);
+        }
+      };
+    } catch (err: any) {
+      console.error('Error accessing media devices:', err);
+      setError('Camera/Microphone access denied or unavailable.');
+    }
   }, [peerId]);
 
-  // Process Incoming Signals
+  useEffect(() => {
+    initWebRTC();
+    return () => {
+      localStream.current?.getTracks().forEach((t) => t.stop());
+      peerConnection.current?.close();
+      peerConnection.current = null;
+    };
+  }, [initWebRTC]);
+
+  // FIX: Process only signals for this peer, don't blindly clear all signals
   useEffect(() => {
     if (!peerConnection.current || !peerId || incomingSignals.length === 0) return;
+    if (processingRef.current) return;
 
-    const processSignals = async () => {
-      for (const signal of incomingSignals) {
-        if (signal.peer_id !== peerId) continue;
+    const signals = consumeSignalsForPeer(peerId);
+    if (signals.length === 0) return;
 
+    processingRef.current = true;
+    (async () => {
+      for (const signal of signals) {
+        const pc = peerConnection.current;
+        if (!pc) break;
         try {
           if (signal.type === 'offer' && signal.sdp) {
-            await peerConnection.current!.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-            const answer = await peerConnection.current!.createAnswer();
-            await peerConnection.current!.setLocalDescription(answer);
-            sendMessage('webrtc.answer', { peer_id: peerId, sdp: peerConnection.current!.localDescription });
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            const send = getSendMessage();
+            send?.('webrtc.answer', { peer_id: peerId, sdp: pc.localDescription });
           } else if (signal.type === 'answer' && signal.sdp) {
-            await peerConnection.current!.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
           } else if (signal.type === 'ice' && signal.candidate) {
-            await peerConnection.current!.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            // FIX: Don't add ICE candidates before remote description is set
+            if (pc.remoteDescription) {
+              await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            }
           }
         } catch (err) {
-          console.error('Error processing signal', err);
+          console.error('Error processing signal', signal.type, err);
         }
       }
-      useWebRTCStore.getState().clearSignals();
-    };
+      processingRef.current = false;
+    })();
+  }, [incomingSignals, peerId, consumeSignalsForPeer]);
 
-    processSignals();
-  }, [incomingSignals, peerId, sendMessage]);
-
-  const initiateCall = async () => {
+  const initiateCall = useCallback(async () => {
     if (!peerConnection.current || !peerId) return;
     try {
       const offer = await peerConnection.current.createOffer();
       await peerConnection.current.setLocalDescription(offer);
-      sendMessage('webrtc.offer', { peer_id: peerId, sdp: peerConnection.current.localDescription });
+      const send = getSendMessage();
+      send?.('webrtc.offer', { peer_id: peerId, sdp: peerConnection.current.localDescription });
     } catch (err) {
       console.error('Error creating offer', err);
     }
-  };
+  }, [peerId]);
 
-  const toggleMute = () => {
-    if (localStream.current) {
-      const audioTracks = localStream.current.getAudioTracks();
-      if (audioTracks.length > 0) {
-        audioTracks[0].enabled = !audioTracks[0].enabled;
-        setIsMuted(!audioTracks[0].enabled);
-      }
+  const toggleMute = useCallback(() => {
+    if (!localStream.current) return;
+    const track = localStream.current.getAudioTracks()[0];
+    if (track) {
+      track.enabled = !track.enabled;
+      setIsMuted(!track.enabled);
     }
-  };
+  }, []);
 
-  const toggleVideo = () => {
-    if (localStream.current) {
-      const videoTracks = localStream.current.getVideoTracks();
-      if (videoTracks.length > 0) {
-        videoTracks[0].enabled = !videoTracks[0].enabled;
-        setIsVideoOff(!videoTracks[0].enabled);
-      }
+  const toggleVideo = useCallback(() => {
+    if (!localStream.current) return;
+    const track = localStream.current.getVideoTracks()[0];
+    if (track) {
+      track.enabled = !track.enabled;
+      setIsVideoOff(!track.enabled);
     }
-  };
+  }, []);
 
   return {
     localVideoRef,
@@ -136,6 +168,7 @@ export function useWebRTC(peerId: string | null) {
     isMuted,
     isVideoOff,
     error,
+    connectionState,
     toggleMute,
     toggleVideo,
     initiateCall,

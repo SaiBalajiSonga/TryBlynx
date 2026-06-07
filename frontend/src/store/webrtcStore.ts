@@ -13,18 +13,43 @@ interface WebRTCState {
   activePeerId: string | null;
   isInitiator: boolean;
   addSignal: (signal: WebRTCSignal) => void;
+  // FIX: consume only signals for a specific peer, don't nuke all
+  consumeSignalsForPeer: (peerId: string) => WebRTCSignal[];
   clearSignals: () => void;
   startVideo: (peerId: string, isInitiator: boolean) => void;
   endVideo: () => void;
 }
 
-export const useWebRTCStore = create<WebRTCState>((set) => ({
+export const useWebRTCStore = create<WebRTCState>((set, get) => ({
   incomingSignals: [],
   isVideoActive: false,
   activePeerId: null,
   isInitiator: false,
-  addSignal: (signal) => set((state) => ({ incomingSignals: [...state.incomingSignals, signal] })),
+
+  addSignal: (signal) => set((state) => ({
+    incomingSignals: [...state.incomingSignals, signal]
+  })),
+
+  consumeSignalsForPeer: (peerId) => {
+    const { incomingSignals } = get();
+    const mine = incomingSignals.filter(s => s.peer_id === peerId);
+    const rest = incomingSignals.filter(s => s.peer_id !== peerId);
+    set({ incomingSignals: rest });
+    return mine;
+  },
+
   clearSignals: () => set({ incomingSignals: [] }),
-  startVideo: (peerId, isInitiator) => set({ isVideoActive: true, activePeerId: peerId, isInitiator }),
-  endVideo: () => set({ isVideoActive: false, activePeerId: null, isInitiator: false, incomingSignals: [] }),
+
+  startVideo: (peerId, isInitiator) => set({
+    isVideoActive: true,
+    activePeerId: peerId,
+    isInitiator,
+  }),
+
+  endVideo: () => set({
+    isVideoActive: false,
+    activePeerId: null,
+    isInitiator: false,
+    incomingSignals: [],
+  }),
 }));
