@@ -177,6 +177,9 @@ func (c *Client) ReadPump() {
 			break
 		}
 
+		// Extend deadline on any inbound message activity
+		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+
 		// ── Parse message envelope ───────────────────────────
 		var msg InboundMessage
 		if err := json.Unmarshal(rawMsg, &msg); err != nil {
