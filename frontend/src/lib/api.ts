@@ -29,4 +29,12 @@ export const api = {
     fetchWithAuth(cursor ? `/feed?cursor=${encodeURIComponent(cursor)}` : '/feed'),
   createPost: (body: string) =>
     fetchWithAuth('/feed', { method: 'POST', body: JSON.stringify({ body }) }),
+  getGroups: () => fetchWithAuth('/groups'),
+  getGroupMembers: (id: string) => fetchWithAuth(`/groups/${id}/members`),
+  getDMs: () => fetchWithAuth('/dm/list'),
+  getMessages: (conversationId: string, cursor?: string) =>
+    fetchWithAuth(cursor ? `/dm/${conversationId}?cursor=${encodeURIComponent(cursor)}` : `/dm/${conversationId}`),
+  sendMessage: (conversationId: string, body: string) =>
+    fetchWithAuth(`/dm/${conversationId}`, { method: 'POST', body: JSON.stringify({ body }) }),
+  searchUsers: (query: string) => fetchWithAuth(`/users/search?q=${encodeURIComponent(query)}`),
 };

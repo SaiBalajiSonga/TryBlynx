@@ -12,7 +12,7 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
 
   const user = useAuthStore((s) => s.user);
   const activeRoomId = useChatStore((s) => s.activeRoomId);
-  const messages = useChatStore((s) => activeRoomId ? s.messages[activeRoomId] || [] : []);
+  const messages = useChatStore((s) => activeRoomId ? s.messages[activeRoomId] : undefined) || [];
   const matchPeerId = useChatStore((s) => s.matchPeerId);
   const clearChat = useChatStore((s) => s.clearChat);
   const startVideo = useWebRTCStore((s) => s.startVideo);

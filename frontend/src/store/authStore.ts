@@ -5,6 +5,9 @@ export interface UserProfile {
   username: string;
   email: string;
   is_vip: boolean;
+  is_admin: boolean;
+  is_moderator: boolean;
+  is_developer: boolean;
   display_name?: string;
   avatar_url?: string;
   bio?: string;
