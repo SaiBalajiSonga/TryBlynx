@@ -28,6 +28,9 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Bypass proxy.golang.org to avoid IPv6 "network is unreachable" issues
+ENV GOPROXY=direct
+
 # Copy source code
 COPY . .
 
