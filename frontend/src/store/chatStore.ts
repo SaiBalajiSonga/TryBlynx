@@ -62,7 +62,8 @@ export const useChatStore = create<ChatState>((set) => ({
     }
   })),
   clearChat: () => set({
-    wsStatus: 'disconnected',
+    // FIX: Do NOT reset wsStatus here — the WebSocket connection is
+    // still alive when leaving a chat. Only reset chat-specific state.
     matchStatus: 'idle',
     targetGender: null,
     activeRoomId: null,

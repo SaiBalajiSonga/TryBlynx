@@ -4,21 +4,16 @@ import { useChatStore } from '../store/chatStore';
 import { useWebRTCStore } from '../store/webrtcStore';
 
 // Singleton WebSocket — one per app session, not per component mount
-// FIX: Storing WS in a module-level ref prevents double-connection from
-// multiple useWebSocket() callers (e.g. Dashboard + ChatRoom + VideoRoom)
 let globalWs: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let isConnecting = false;
-
-// Expose sendMessage globally so any component can call it without
-// creating a new connection
 let globalSendMessage: ((type: string, payload: unknown) => void) | null = null;
 
 export function useWebSocket() {
   const token = useAuthStore((s) => s.token);
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const { setWsStatus, setMatchStatus, setActiveRoomId, setMatchPeerId, addMessage, addDMMessage } = useChatStore();
-  const wsStatusRef = useRef<string>('disconnected');
+  const handleMessageRef = useRef<((data: any) => void) | null>(null);
 
   const handleMessage = useCallback((data: any) => {
     switch (data.type) {
@@ -35,18 +30,24 @@ export function useWebSocket() {
         setMatchStatus('idle');
         break;
       case 'match.found':
-        // FIX: call sendMessage directly on globalWs, not via stale closure
-        if (globalWs && globalWs.readyState === WebSocket.OPEN) {
-          globalWs.send(JSON.stringify({ type: 'chat.join', payload: { room_id: data.payload.room_id } }));
-        }
+        // FIX: Set peer ID before joining so it's available when ChatRoom mounts
         setMatchPeerId(data.payload.peer_id);
+        // Send chat.join directly on globalWs to avoid stale closure
+        if (globalWs && globalWs.readyState === WebSocket.OPEN) {
+          globalWs.send(JSON.stringify({
+            type: 'chat.join',
+            payload: { room_id: data.payload.room_id }
+          }));
+        }
         break;
       case 'chat.joined':
+        // FIX: Set activeRoomId first, then switch status in next tick
+        // so ChatRoom never renders with null activeRoomId
         setActiveRoomId(data.payload.room_id);
-        setMatchStatus('matched');
+        setTimeout(() => setMatchStatus('matched', undefined), 0);
         break;
       case 'error':
-        console.error('WS server error:', data.payload.message);
+        console.error('WS server error:', data.payload?.message);
         break;
       case 'webrtc.offer':
       case 'webrtc.answer':
@@ -64,9 +65,12 @@ export function useWebSocket() {
         break;
       }
       default:
-        console.log('Unhandled WS message:', data);
+        console.log('Unhandled WS message:', data.type, data);
     }
   }, [addMessage, addDMMessage, setMatchStatus, setActiveRoomId, setMatchPeerId]);
+
+  // Always keep the ref pointing to the latest handleMessage
+  handleMessageRef.current = handleMessage;
 
   const connect = useCallback(() => {
     if (!token) return;
@@ -75,7 +79,6 @@ export function useWebSocket() {
 
     isConnecting = true;
     setWsStatus('connecting');
-    wsStatusRef.current = 'connecting';
 
     const WS_URL = (import.meta as any).env?.VITE_WS_URL || 'ws://localhost:8080/ws';
     const ws = new WebSocket(`${WS_URL}?token=${token}`);
@@ -84,12 +87,12 @@ export function useWebSocket() {
     ws.onopen = () => {
       isConnecting = false;
       setWsStatus('connected');
-      wsStatusRef.current = 'connected';
     };
 
     ws.onmessage = (event) => {
       try {
-        handleMessage(JSON.parse(event.data));
+        // Use ref so we always call the latest version without re-creating ws
+        handleMessageRef.current?.(JSON.parse(event.data));
       } catch (err) {
         console.error('Failed to parse WS message', err);
       }
@@ -98,8 +101,6 @@ export function useWebSocket() {
     ws.onclose = (event) => {
       isConnecting = false;
       setWsStatus('disconnected');
-      wsStatusRef.current = 'disconnected';
-
       if (globalWs === ws) globalWs = null;
 
       // Auth errors — don't reconnect
@@ -108,7 +109,7 @@ export function useWebSocket() {
         return;
       }
 
-      // FIX: Exponential backoff, not immediate reconnect loop
+      // Exponential backoff
       const delay = Math.min(3000 + Math.random() * 2000, 15000);
       reconnectTimer = setTimeout(() => connect(), delay);
     };
@@ -117,13 +118,14 @@ export function useWebSocket() {
       isConnecting = false;
       ws.close();
     };
-  }, [token, clearAuth, setWsStatus, handleMessage]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, clearAuth, setWsStatus]);
+  // NOTE: handleMessage intentionally excluded from deps — we use the ref pattern instead
+  // to avoid recreating the WebSocket connection on every render
 
   useEffect(() => {
     connect();
     return () => {
-      // Don't close on unmount — the WS is a singleton
-      // Only clear reconnect timer
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -131,7 +133,6 @@ export function useWebSocket() {
     };
   }, [connect]);
 
-  // FIX: sendMessage uses globalWs directly, not a stale ref
   const sendMessage = useCallback((type: string, payload: unknown) => {
     if (globalWs && globalWs.readyState === WebSocket.OPEN) {
       globalWs.send(JSON.stringify({ type, payload }));
@@ -145,7 +146,6 @@ export function useWebSocket() {
   return { sendMessage };
 }
 
-// Exported for use in useWebRTC without creating a new WS connection
 export function getSendMessage() {
   return globalSendMessage;
 }

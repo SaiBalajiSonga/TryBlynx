@@ -100,10 +100,10 @@ type Hub struct {
 	Config *config.Config
 
 	// ── State (accessed ONLY from the Run goroutine) ─────────
-	// clients maps each user's UUID to ALL their active WebSocket
-	// connections. Multiple tabs/devices per user are supported;
-	// each connection is tracked independently.
-	clients map[uuid.UUID]map[*Client]bool
+	// clients maps each user's UUID to their active WebSocket
+	// connection. Only one connection per user is supported;
+	// new connections replace existing ones.
+	clients map[uuid.UUID]*Client
 
 	// rooms maps Redis channel keys ("chat:room:{id}") to the
 	// set of local clients subscribed to that room.
@@ -146,7 +146,7 @@ func NewHub(store *db.Store, rdb *redis.Client, cfg *config.Config) *Hub {
 		RDB:    rdb,
 		Config: cfg,
 
-		clients: make(map[uuid.UUID]map[*Client]bool),
+		clients: make(map[uuid.UUID]*Client),
 		rooms:   make(map[string]map[*Client]bool),
 
 		register:   make(chan *Client, registerBufSize),
@@ -253,48 +253,31 @@ func (h *Hub) SendToUser(userID uuid.UUID, data []byte) {
 // Internal Event Handlers (run ONLY inside the Run goroutine)
 // ══════════════════════════════════════════════════════════════
 
-// handleRegister adds a client to the registry. Multiple connections
-// per user (e.g. multiple tabs or devices) are fully supported.
-// Each connection is tracked independently in a per-user set.
+// handleRegister adds a client to the registry. If the user
+// already has an active connection, the old one is replaced
+// (single-connection-per-user policy).
 func (h *Hub) handleRegister(client *Client) {
-	if h.clients[client.UserID] == nil {
-		h.clients[client.UserID] = make(map[*Client]bool)
+	if existing, ok := h.clients[client.UserID]; ok {
+		log.Printf("ws-hub: replacing existing connection for user %s", client.UserID)
+		h.removeClientFromAllRooms(existing)
+		close(existing.Send)
 	}
-	h.clients[client.UserID][client] = true
 
-	total := 0
-	for _, conns := range h.clients {
-		total += len(conns)
-	}
-	log.Printf("ws-hub: registered user %s [conns for user: %d, total: %d]",
-		client.UserID, len(h.clients[client.UserID]), total)
+	h.clients[client.UserID] = client
+	log.Printf("ws-hub: registered user %s [total: %d]", client.UserID, len(h.clients))
 }
 
-// handleUnregister removes a specific client connection from the registry.
-// If it was the user's last connection, the user entry is cleaned up entirely.
+// handleUnregister removes a client from the registry and all
+// rooms. The Send channel is closed to signal the WritePump to
+// exit. Only removes if the registered client matches (prevents
+// a stale unregister from evicting a replacement connection).
 func (h *Hub) handleUnregister(client *Client) {
-	conns, ok := h.clients[client.UserID]
-	if !ok {
-		return
-	}
-	if _, exists := conns[client]; !exists {
-		return
-	}
-
-	h.removeClientFromAllRooms(client)
-	delete(conns, client)
-	close(client.Send)
-
-	if len(conns) == 0 {
+	if current, ok := h.clients[client.UserID]; ok && current == client {
+		h.removeClientFromAllRooms(client)
 		delete(h.clients, client.UserID)
+		close(client.Send)
+		log.Printf("ws-hub: unregistered user %s [total: %d]", client.UserID, len(h.clients))
 	}
-
-	total := 0
-	for _, c := range h.clients {
-		total += len(c)
-	}
-	log.Printf("ws-hub: unregistered client for user %s [remaining conns: %d, total: %d]",
-		client.UserID, len(h.clients[client.UserID]), total)
 }
 
 // handleJoinRoom adds a client to a room. If this is the first
@@ -338,22 +321,19 @@ func (h *Hub) handleLeaveRoom(req *RoomRequest) {
 	}
 }
 
-// handleDirect delivers a message to all active connections of a specific user.
-// If the user has multiple tabs open, all of them receive the message.
-// If a client's Send buffer is full, that connection is dropped with a warning.
+// handleDirect delivers a message to a specific user. If the
+// user is connected and their Send buffer has capacity, the
+// message is queued. Otherwise, it is dropped with a log warning.
 func (h *Hub) handleDirect(msg *DirectMessage) {
-	conns, ok := h.clients[msg.TargetUserID]
-	if !ok || len(conns) == 0 {
+	client, ok := h.clients[msg.TargetUserID]
+	if !ok {
 		return // User not connected; message already persisted in DB
 	}
 
-	for client := range conns {
-		select {
-		case client.Send <- msg.Data:
-		default:
-			log.Printf("ws-hub: dropping direct message for slow client %s (user %s)",
-				client.Conn.RemoteAddr(), msg.TargetUserID)
-		}
+	select {
+	case client.Send <- msg.Data:
+	default:
+		log.Printf("ws-hub: dropping direct message for slow client %s", msg.TargetUserID)
 	}
 }
 

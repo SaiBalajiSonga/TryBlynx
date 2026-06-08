@@ -5,7 +5,7 @@ import { useAuthStore } from '../store/authStore';
 import { useWebSocket } from '../lib/useWebSocket';
 import { useWebRTCStore } from '../store/webrtcStore';
 
-export function ChatRoom() {
+export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
   const [message, setMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -36,6 +36,7 @@ export function ChatRoom() {
   const handleDisconnect = () => {
     if (activeRoomId) sendMessage('chat.leave', { room_id: activeRoomId });
     clearChat();
+    onLeave?.();
   };
 
   if (!activeRoomId) {

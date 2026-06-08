@@ -240,8 +240,11 @@ export function Dashboard() {
           />
         )}
         {activeTab === 'chat' && (
-          matchStatus === 'matched' || activeRoomId
-            ? <ChatRoom />
+          // FIX: Both must be true — matchStatus==='matched' alone
+          // is not enough; activeRoomId must be set first or ChatRoom
+          // will crash reading messages[null].
+          (matchStatus === 'matched' && activeRoomId)
+            ? <ChatRoom onLeave={() => setActiveTab('match')} />
             : <EmptyChat />
         )}
       </main>
