@@ -1,367 +1,308 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
-import { useWebSocket } from '../lib/useWebSocket';
+import { Link, useLocation, useNavigate, Routes, Route, Navigate } from 'react-router-dom';
 import {
-  Settings, LogOut, MessageSquare, Users, Zap, Video,
-  Globe, Crown, Wifi, WifiOff, Loader2
+  Menu, Bell, MessageSquare, Zap, Crown, LogOut, Settings,
+  Home as HomeIcon, Video, Users, Search as SearchIcon, Shield, Star, Terminal
 } from 'lucide-react';
-import { ChatRoom } from './ChatRoom';
 import { SettingsView } from './Settings';
-import { Feed } from './Feed';
-import { VideoRoom } from './VideoRoom';
-import { useWebRTCStore } from '../store/webrtcStore';
-
-type Tab = 'feed' | 'match' | 'chat' | 'settings';
+import { Home } from './Home';
+import { TextChat } from './TextChat';
+import { VideoChat } from './VideoChat';
+import { GroupChat } from './GroupChat';
+import { DMs } from './DMs';
+import { Search } from './Search';
+import { useWebSocket } from '../lib/useWebSocket';
 
 export function Dashboard() {
   const user = useAuthStore((s) => s.user);
   const clearAuth = useAuthStore((s) => s.clearAuth);
-
   const wsStatus = useChatStore((s) => s.wsStatus);
-  const matchStatus = useChatStore((s) => s.matchStatus);
-  const targetGender = useChatStore((s) => s.targetGender);
-  const activeRoomId = useChatStore((s) => s.activeRoomId);
-  const { isVideoActive, activePeerId, isInitiator } = useWebRTCStore();
+  useWebSocket(); // Initialize global websocket connection
 
-  const { sendMessage } = useWebSocket();
-  const [activeTab, setActiveTab] = useState<Tab>('feed');
-  const [matchElapsed, setMatchElapsed] = useState(0);
+  const location = useLocation();
+  const navigate = useNavigate();
+  
+  const activeTab = location.pathname.split('/')[1] || 'home';
 
-  useEffect(() => {
-    if (matchStatus === 'matched') setActiveTab('chat');
-  }, [matchStatus]);
-
-  // Timer for wait indication
-  useEffect(() => {
-    if (matchStatus !== 'waiting') { setMatchElapsed(0); return; }
-    const t = setInterval(() => setMatchElapsed(e => e + 1), 1000);
-    return () => clearInterval(t);
-  }, [matchStatus]);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [activeDropdown, setActiveDropdown] = useState<'notifications' | 'profile' | null>(null);
 
   const initials = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
   const displayName = user?.display_name || user?.username || 'Anonymous';
 
-  const navItems: { id: Tab; icon: typeof Globe; label: string; badge?: number }[] = [
-    { id: 'feed', icon: Globe, label: 'Discover' },
-    { id: 'match', icon: Users, label: 'Matchmaking' },
-    { id: 'chat', icon: MessageSquare, label: 'Chat', badge: matchStatus === 'matched' && activeRoomId ? 1 : 0 },
+  const toggleDropdown = (d: 'notifications' | 'profile') => {
+    setActiveDropdown(prev => prev === d ? null : d);
+  };
+
+  const navItems: { id: string; path: string; icon: any; label: string }[] = [
+    { id: 'home', path: '/', icon: HomeIcon, label: 'Home' },
+    { id: 'text-chat', path: '/text-chat', icon: MessageSquare, label: 'Text Chat' },
+    { id: 'video-chat', path: '/video-chat', icon: Video, label: 'Video Chat' },
+    { id: 'groups', path: '/groups', icon: Users, label: 'Group Chat' },
+    { id: 'search', path: '/search', icon: SearchIcon, label: 'Search Users' },
+    { id: 'settings', path: '/settings', icon: Settings, label: 'Settings' },
   ];
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--blynx-900)' }}>
-      {isVideoActive && activePeerId && (
-        <VideoRoom peerId={activePeerId} isInitiator={isInitiator} />
-      )}
-
-      {/* ── Sidebar ── */}
-      <aside style={{
-        width: '240px',
-        flexShrink: 0,
-        background: 'var(--blynx-850)',
-        borderRight: '1px solid var(--border)',
-        display: 'flex',
-        flexDirection: 'column',
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--blynx-900)' }}>
+      
+      {/* ── Top Navbar ── */}
+      <header style={{
+        height: '64px', flexShrink: 0,
+        background: 'rgba(13,14,18,0.85)', backdropFilter: 'blur(12px)',
+        borderBottom: '1px solid var(--border)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 20px', zIndex: 100, position: 'relative'
       }}>
-        {/* Brand */}
-        <div style={{ padding: '20px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-            <div style={{
-              width: '36px', height: '36px',
-              background: 'var(--accent)',
-              borderRadius: '10px',
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--text-primary)', padding: '8px', borderRadius: '50%',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 0 16px var(--accent-glow)',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--blynx-750)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          >
+            <Menu size={24} />
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }} onClick={() => navigate('/')} className="cursor-pointer">
+            <div style={{
+              width: '32px', height: '32px', background: 'var(--accent)', borderRadius: '8px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 0 12px var(--accent-glow)',
             }}>
-              <Zap size={18} color="white" fill="white" />
+              <Zap size={16} color="white" fill="white" />
             </div>
             <span style={{ fontWeight: 700, fontSize: '18px', color: 'white', letterSpacing: '-0.3px' }}>
               TryBlynx
             </span>
           </div>
-
-          {/* WS Status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className={`status-dot ${wsStatus}`} />
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-              {wsStatus}
-            </span>
-            {wsStatus === 'connected'
-              ? <Wifi size={12} color="var(--teal)" />
-              : wsStatus === 'connecting'
-              ? <Loader2 size={12} color="var(--yellow)" className="animate-spin-slow" />
-              : <WifiOff size={12} color="var(--red)" />
-            }
-          </div>
         </div>
 
-        {/* Nav */}
-        <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
-          <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', padding: '0 8px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-            Navigation
-          </p>
-          {navItems.map(({ id, icon: Icon, label, badge }) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* Notifications */}
+          <div style={{ position: 'relative' }}>
             <button
-              key={id}
-              onClick={() => setActiveTab(id)}
+              onClick={() => toggleDropdown('notifications')}
               style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                padding: '9px 10px',
-                borderRadius: '8px',
-                border: 'none',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                fontSize: '14px',
-                fontWeight: activeTab === id ? 600 : 400,
-                transition: 'background 0.12s, color 0.12s',
-                background: activeTab === id ? 'rgba(88,101,242,0.18)' : 'transparent',
-                color: activeTab === id ? 'var(--accent)' : 'var(--text-secondary)',
-                position: 'relative',
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: 'var(--text-primary)', padding: '8px', borderRadius: '50%',
+                position: 'relative', display: 'flex'
               }}
             >
-              {activeTab === id && (
-                <div style={{
-                  position: 'absolute', left: '-8px',
-                  width: '3px', height: '20px',
-                  background: 'var(--accent)',
-                  borderRadius: '0 2px 2px 0',
-                }} />
-              )}
-              <Icon size={18} />
-              {label}
-              {!!badge && (
-                <span style={{
-                  marginLeft: 'auto',
-                  background: 'var(--accent)',
-                  color: 'white',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  borderRadius: '10px',
-                  padding: '1px 6px',
-                  minWidth: '18px',
-                  textAlign: 'center',
-                }}>
-                  {badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
-
-        {/* User footer */}
-        <div style={{ padding: '12px', borderTop: '1px solid var(--border)' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '10px',
-            padding: '8px',
-            borderRadius: '8px',
-            background: 'var(--blynx-750)',
-            marginBottom: '8px',
-          }}>
-            <div style={{
-              width: '36px', height: '36px', borderRadius: '50%',
-              background: user?.is_vip
-                ? 'linear-gradient(135deg, #faa61a, #ff6b35)'
-                : 'linear-gradient(135deg, var(--accent), #7289da)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontWeight: 700, color: 'white', fontSize: '15px',
-              flexShrink: 0,
-            }}>
-              {initials}
-            </div>
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <p style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: 'white', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {displayName}
-                </p>
-                {user?.is_vip && <Crown size={12} color="#faa61a" />}
+              <Bell size={24} />
+              <div style={{
+                position: 'absolute', top: '4px', right: '4px',
+                background: 'var(--red)', color: 'white', fontSize: '10px',
+                fontWeight: 700, borderRadius: '10px', padding: '1px 5px',
+                border: '2px solid rgba(13,14,18,1)'
+              }}>
+                3
               </div>
-              <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                @{user?.username}
-              </p>
-            </div>
+            </button>
+            {/* Notifications Dropdown */}
+            {activeDropdown === 'notifications' && (
+              <div style={{
+                position: 'absolute', top: '48px', right: 0,
+                width: '320px', background: 'var(--blynx-800)',
+                border: '1px solid var(--border)', borderRadius: '12px',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.4)', zIndex: 110,
+                overflow: 'hidden', animation: 'fade-in 0.15s ease'
+              }}>
+                <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
+                  <h3 style={{ margin: 0, fontSize: '16px', color: 'white', fontWeight: 600 }}>Notifications</h3>
+                </div>
+                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
+                    <p style={{ margin: '0 0 4px', fontSize: '14px', color: 'white' }}>New group chat created!</p>
+                    <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>2 hours ago</p>
+                  </div>
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
+                    <p style={{ margin: '0 0 4px', fontSize: '14px', color: 'white' }}>System maintenance tomorrow.</p>
+                    <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>5 hours ago</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div style={{ display: 'flex', gap: '6px' }}>
+          {/* DMs Icon */}
+          <button
+            onClick={() => navigate('/dms')}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--text-primary)', padding: '8px', borderRadius: '50%',
+              position: 'relative', display: 'flex'
+            }}
+          >
+            <MessageSquare size={24} />
+            <div style={{
+              position: 'absolute', top: '4px', right: '2px',
+              background: 'var(--accent)', color: 'white', fontSize: '10px',
+              fontWeight: 700, borderRadius: '10px', padding: '1px 5px',
+              border: '2px solid rgba(13,14,18,1)'
+            }}>
+              2
+            </div>
+          </button>
+
+          {/* Profile */}
+          <div style={{ position: 'relative' }}>
             <button
-              onClick={() => setActiveTab('settings')}
+              onClick={() => toggleDropdown('profile')}
               style={{
-                flex: 1,
-                padding: '8px',
-                borderRadius: '8px',
-                border: 'none',
-                cursor: 'pointer',
-                background: activeTab === 'settings' ? 'var(--accent)' : 'var(--blynx-600)',
-                color: activeTab === 'settings' ? 'white' : 'var(--text-secondary)',
+                width: '36px', height: '36px', borderRadius: '50%', border: 'none', cursor: 'pointer',
+                background: user?.is_vip ? 'linear-gradient(135deg, #faa61a, #ff6b35)' : 'linear-gradient(135deg, var(--accent), #7289da)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'background 0.12s',
+                fontWeight: 700, color: 'white', fontSize: '15px', padding: 0
               }}
-              title="Settings"
             >
-              <Settings size={15} />
+              {initials}
             </button>
-            <button
-              onClick={clearAuth}
-              style={{
-                flex: 1,
-                padding: '8px',
-                borderRadius: '8px',
-                border: 'none',
-                cursor: 'pointer',
-                background: 'var(--blynx-600)',
-                color: 'var(--text-secondary)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'background 0.12s, color 0.12s',
-              }}
-              title="Sign Out"
-              onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(237,66,69,0.2)'; (e.target as HTMLElement).style.color = '#ed4245'; }}
-              onMouseLeave={e => { (e.target as HTMLElement).style.background = 'var(--blynx-600)'; (e.target as HTMLElement).style.color = 'var(--text-secondary)'; }}
-            >
-              <LogOut size={15} />
-            </button>
+            {/* Profile Dropdown */}
+            {activeDropdown === 'profile' && (
+              <div style={{
+                position: 'absolute', top: '48px', right: 0,
+                width: '240px', background: 'var(--blynx-800)',
+                border: '1px solid var(--border)', borderRadius: '12px',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.4)', zIndex: 110,
+                overflow: 'hidden', animation: 'fade-in 0.15s ease'
+              }}>
+                <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+                    <p style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: 'white', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {displayName}
+                    </p>
+                    <div style={{ display: 'flex', gap: '2px', marginLeft: 'auto' }}>
+                      {user?.is_developer && <span title="Developer"><Terminal size={14} color="#00ff00" /></span>}
+                      {user?.is_admin && <span title="Admin"><Shield size={14} color="#ff3333" /></span>}
+                      {user?.is_moderator && <span title="Moderator"><Star size={14} color="#3399ff" /></span>}
+                      {user?.is_vip && <span title="VIP"><Crown size={14} color="#faa61a" /></span>}
+                    </div>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    @{user?.username}
+                  </p>
+                </div>
+                <div style={{ padding: '8px' }}>
+                  <button
+                    onClick={() => { navigate('/settings'); setActiveDropdown(null); }}
+                    style={{
+                      width: '100%', padding: '10px 12px', background: 'transparent', border: 'none',
+                      color: 'var(--text-primary)', fontSize: '14px', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', borderRadius: '6px'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--blynx-750)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <Settings size={16} /> Settings
+                  </button>
+                  <button
+                    onClick={clearAuth}
+                    style={{
+                      width: '100%', padding: '10px 12px', background: 'transparent', border: 'none',
+                      color: '#ed4245', fontSize: '14px', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', borderRadius: '6px',
+                      marginTop: '4px'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(237,66,69,0.1)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <LogOut size={16} /> Sign Out
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      </aside>
+      </header>
 
-      {/* ── Main ── */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-        {activeTab === 'feed' && <Feed />}
-        {activeTab === 'settings' && <SettingsView />}
-        {activeTab === 'match' && (
-          <MatchView
-            matchStatus={matchStatus}
-            targetGender={targetGender}
-            wsStatus={wsStatus}
-            matchElapsed={matchElapsed}
-            onFind={() => sendMessage('match.find', { target_gender: 'any' })}
-            onCancel={() => sendMessage('match.cancel', {})}
+      {/* ── Main Layout (Sidebar + Content) ── */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+        
+        {/* Sidebar (Overlapping) */}
+        <aside style={{
+          position: 'absolute', top: 0, bottom: 0, left: 0, zIndex: 50,
+          width: '240px', background: 'var(--blynx-850)',
+          borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column',
+          boxShadow: isSidebarOpen ? '4px 0 24px rgba(0,0,0,0.5)' : 'none',
+          transform: isSidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+          transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)', overflowY: 'auto'
+        }}>
+          <nav style={{ padding: '16px 12px' }}>
+            <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', padding: '0 8px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
+              Menu
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {navItems.map(({ id, path, icon: Icon, label }) => {
+                const isActive = activeTab === id || (id === 'home' && activeTab === '');
+                return (
+                  <Link
+                    key={id}
+                    to={path}
+                    onClick={() => setIsSidebarOpen(false)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 12px',
+                      borderRadius: '8px', cursor: 'pointer', textDecoration: 'none',
+                      fontSize: '14px', fontWeight: isActive ? 600 : 500,
+                      fontFamily: 'inherit',
+                      background: isActive ? 'rgba(88,101,242,0.15)' : 'transparent',
+                      color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
+                      transition: 'background 0.12s, color 0.12s',
+                    }}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--blynx-750)'; }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <Icon size={20} />
+                    {label}
+                  </Link>
+                );
+              })}
+            </div>
+          </nav>
+
+          <div style={{ marginTop: 'auto', padding: '16px 12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'var(--blynx-800)', borderRadius: '8px' }}>
+              <span className={`status-dot ${wsStatus}`} />
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary)', textTransform: 'capitalize' }}>
+                {wsStatus}
+              </span>
+            </div>
+          </div>
+        </aside>
+
+        {/* Sidebar Backdrop Overlay */}
+        {isSidebarOpen && (
+          <div
+            onClick={() => setIsSidebarOpen(false)}
+            style={{
+              position: 'absolute', inset: 0, zIndex: 40,
+              background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)',
+              animation: 'fade-in 0.2s ease'
+            }}
           />
         )}
-        {activeTab === 'chat' && (
-          // FIX: Both must be true — matchStatus==='matched' alone
-          // is not enough; activeRoomId must be set first or ChatRoom
-          // will crash reading messages[null].
-          (matchStatus === 'matched' && activeRoomId)
-            ? <ChatRoom onLeave={() => setActiveTab('match')} />
-            : <EmptyChat />
-        )}
-      </main>
-    </div>
-  );
-}
 
-function MatchView({ matchStatus, targetGender, wsStatus, matchElapsed, onFind, onCancel }: {
-  matchStatus: string;
-  targetGender: string | null;
-  wsStatus: string;
-  matchElapsed: number;
-  onFind: () => void;
-  onCancel: () => void;
-}) {
-  const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        {/* Content Area */}
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }} onClick={() => setActiveDropdown(null)}>
+          <Routes>
+            <Route path="/" element={<Home onNavigate={(p: any) => navigate(`/${p}`)} />} />
+            <Route path="/text-chat" element={<TextChat />} />
+            <Route path="/video-chat" element={<VideoChat />} />
+            <Route path="/groups" element={<GroupChat />} />
+            <Route path="/groups/:id" element={<GroupChat />} />
+            <Route path="/dms" element={<DMs />} />
+            <Route path="/dms/:id" element={<DMs />} />
+            <Route path="/settings" element={<SettingsView />} />
+            <Route path="/search" element={<Search />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </main>
 
-  return (
-    <div style={{
-      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '32px',
-      background: 'var(--blynx-900)',
-      backgroundImage: 'radial-gradient(ellipse at center, rgba(88,101,242,0.06) 0%, transparent 70%)',
-    }}>
-      <div style={{ maxWidth: '420px', width: '100%', textAlign: 'center' }}>
-        {/* Icon with pulse ring */}
-        <div style={{ position: 'relative', display: 'inline-flex', marginBottom: '32px' }}>
-          {matchStatus === 'waiting' && (
-            <>
-              <div style={{
-                position: 'absolute', inset: '-16px',
-                borderRadius: '50%',
-                border: '2px solid var(--accent)',
-                animation: 'pulse-ring 1.5s ease-out infinite',
-              }} />
-              <div style={{
-                position: 'absolute', inset: '-8px',
-                borderRadius: '50%',
-                border: '2px solid var(--accent)',
-                animation: 'pulse-ring 1.5s ease-out 0.4s infinite',
-              }} />
-            </>
-          )}
-          <div style={{
-            width: '96px', height: '96px',
-            borderRadius: '50%',
-            background: matchStatus === 'waiting' ? 'rgba(88,101,242,0.15)' : 'var(--blynx-700)',
-            border: `2px solid ${matchStatus === 'waiting' ? 'var(--accent)' : 'var(--border)'}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'all 0.3s',
-          }}>
-            <Video size={40} color={matchStatus === 'waiting' ? 'var(--accent)' : 'var(--text-muted)'} />
-          </div>
-        </div>
-
-        <h2 style={{ margin: '0 0 10px', fontSize: '26px', fontWeight: 700, color: 'white' }}>
-          {matchStatus === 'waiting' ? 'Finding a match...' : 'Ready to Connect?'}
-        </h2>
-        <p style={{ margin: '0 0 32px', color: 'var(--text-secondary)', fontSize: '15px' }}>
-          {matchStatus === 'waiting'
-            ? `Searching${targetGender && targetGender !== 'any' ? ` for ${targetGender}` : ''} · ${fmt(matchElapsed)}`
-            : 'Join the pool and meet someone new instantly.'}
-        </p>
-
-        {matchStatus === 'waiting' ? (
-          <button
-            onClick={onCancel}
-            style={{
-              width: '100%', padding: '14px', borderRadius: '10px',
-              border: '1px solid var(--border-bright)',
-              background: 'var(--blynx-700)',
-              color: 'var(--text-primary)',
-              fontSize: '15px', fontWeight: 600,
-              cursor: 'pointer', fontFamily: 'inherit',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-              transition: 'background 0.12s',
-            }}
-          >
-            Cancel Search
-          </button>
-        ) : (
-          <button
-            onClick={onFind}
-            disabled={wsStatus !== 'connected'}
-            className="btn-accent"
-            style={{
-              width: '100%', padding: '14px',
-              fontSize: '15px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-            }}
-          >
-            <Zap size={18} />
-            {wsStatus !== 'connected' ? 'Connecting...' : 'Find a Match'}
-          </button>
-        )}
-
-        {wsStatus !== 'connected' && matchStatus !== 'waiting' && (
-          <p style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
-            Waiting for server connection…
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function EmptyChat() {
-  return (
-    <div style={{
-      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'var(--blynx-900)',
-    }}>
-      <div style={{ textAlign: 'center' }}>
-        <MessageSquare size={48} color="var(--blynx-400)" style={{ marginBottom: '16px' }} />
-        <p style={{ color: 'var(--text-muted)', fontSize: '15px', margin: 0 }}>
-          Go to Matchmaking to start a conversation
-        </p>
       </div>
     </div>
   );
