@@ -56,7 +56,7 @@ const userColumns = `
 	COALESCE(avatar_url, '')  AS avatar_url,
 	COALESCE(bio, '')         AS bio,
 	gender, location, language, interests,
-	is_vip, shadowbanned,
+	is_vip, is_admin, is_moderator, is_developer, shadowbanned,
 	created_at, updated_at`
 
 // scanUser scans a single row matching the userColumns layout
@@ -67,7 +67,7 @@ func scanUser(row pgx.Row) (*models.User, error) {
 		&u.ID, &u.Username, &u.Email, &u.PasswordHash,
 		&u.DisplayName, &u.AvatarURL, &u.Bio,
 		&u.Gender, &u.Location, &u.Language, &u.Interests,
-		&u.IsVIP, &u.Shadowbanned,
+		&u.IsVIP, &u.IsAdmin, &u.IsModerator, &u.IsDeveloper, &u.Shadowbanned,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -433,6 +433,37 @@ func (s *Store) IsConversationMember(ctx context.Context, conversationID, userID
 	return exists, err
 }
 
+// AutoJoinPublicGroup checks if the conversation is a public group, and if so,
+// inserts the user into conversation_members, returning true. If it's a DM, it
+// delegates to IsConversationMember.
+// Used for frictionless public group chat access.
+func (s *Store) AutoJoinPublicGroup(ctx context.Context, conversationID, userID uuid.UUID) (bool, error) {
+	var convType string
+	err := s.Pool.QueryRow(ctx, `SELECT type FROM conversations WHERE id = $1`, conversationID).Scan(&convType)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return false, nil // Conversation doesn't exist
+		}
+		return false, fmt.Errorf("db: failed to get conversation type: %w", err)
+	}
+
+	if convType == "group" {
+		// It's a public group, automatically insert the member and ignore if they already exist
+		_, err := s.Pool.Exec(ctx, `
+			INSERT INTO conversation_members (conversation_id, user_id)
+			VALUES ($1, $2)
+			ON CONFLICT (conversation_id, user_id) DO NOTHING
+		`, conversationID, userID)
+		if err != nil {
+			return false, fmt.Errorf("db: failed to auto-join group: %w", err)
+		}
+		return true, nil
+	}
+
+	// For DMs or other types, strictly enforce membership
+	return s.IsConversationMember(ctx, conversationID, userID)
+}
+
 // GetUserConversations retrieves all conversations for a user,
 // ordered by most recent activity (last message timestamp), with
 // a preview of the latest message.
@@ -490,4 +521,149 @@ func (s *Store) GetUserConversations(ctx context.Context, userID uuid.UUID) ([]m
 		summaries = []models.ConversationSummary{}
 	}
 	return summaries, rows.Err()
+}
+
+// ──────────────────────────────────────────────────────────────
+// DM & GROUP CHAT DISCOVERY
+// ──────────────────────────────────────────────────────────────
+
+// GetAllGroups retrieves all group chats available on the server.
+func (s *Store) GetAllGroups(ctx context.Context) ([]models.Conversation, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT id, type, COALESCE(name, '') AS name, created_at
+		FROM conversations
+		WHERE type = 'group'
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("db: failed to query groups: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []models.Conversation
+	for rows.Next() {
+		var c models.Conversation
+		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &c.CreatedAt); err != nil {
+			return nil, fmt.Errorf("db: failed to scan group: %w", err)
+		}
+		groups = append(groups, c)
+	}
+	if groups == nil {
+		groups = []models.Conversation{}
+	}
+	return groups, rows.Err()
+}
+
+// DMConversation extends ConversationSummary with peer user info.
+type DMConversation struct {
+	models.ConversationSummary
+	PeerID       uuid.UUID `json:"peer_id"`
+	PeerName     string    `json:"peer_name"`
+	PeerAvatar   string    `json:"peer_avatar"`
+}
+
+// GetUserDMs retrieves a user's DM conversations, including the peer's profile info.
+func (s *Store) GetUserDMs(ctx context.Context, userID uuid.UUID) ([]DMConversation, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT
+			c.id, c.type, c.created_at,
+			COALESCE((SELECT body FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1), '') AS last_message,
+			(SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
+			u.id AS peer_id,
+			COALESCE(NULLIF(u.display_name, ''), u.username) AS peer_name,
+			COALESCE(u.avatar_url, '') AS peer_avatar
+		FROM conversations c
+		JOIN conversation_members cm1 ON cm1.conversation_id = c.id AND cm1.user_id = $1
+		JOIN conversation_members cm2 ON cm2.conversation_id = c.id AND cm2.user_id != $1
+		JOIN users u ON u.id = cm2.user_id
+		WHERE c.type = 'dm'
+		ORDER BY COALESCE(
+			(SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1),
+			c.created_at
+		) DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("db: failed to query user DMs: %w", err)
+	}
+	defer rows.Close()
+
+	var dms []DMConversation
+	for rows.Next() {
+		var dm DMConversation
+		if err := rows.Scan(
+			&dm.ID, &dm.Type, &dm.CreatedAt,
+			&dm.LastMessage, &dm.LastMessageAt,
+			&dm.PeerID, &dm.PeerName, &dm.PeerAvatar,
+		); err != nil {
+			return nil, fmt.Errorf("db: failed to scan user DM: %w", err)
+		}
+		dm.Name = dm.PeerName // Conveniently set the conversation name to the peer's name
+		dms = append(dms, dm)
+	}
+	if dms == nil {
+		dms = []DMConversation{}
+	}
+	return dms, rows.Err()
+}
+
+// GetConversationMembers retrieves all members of a conversation, ordered by VIP/Admin status and then username.
+func (s *Store) GetConversationMembers(ctx context.Context, conversationID uuid.UUID) ([]models.User, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT u.id, u.username, u.email, u.password_hash,
+			COALESCE(u.display_name, '') AS display_name,
+			COALESCE(u.avatar_url, '') AS avatar_url,
+			COALESCE(u.bio, '') AS bio,
+			u.gender, u.location, u.language, u.interests,
+			u.is_vip, u.is_admin, u.is_moderator, u.is_developer, u.shadowbanned,
+			u.created_at, u.updated_at
+		FROM users u
+		JOIN conversation_members cm ON cm.user_id = u.id
+		WHERE cm.conversation_id = $1
+		ORDER BY u.is_admin DESC, u.is_moderator DESC, u.is_vip DESC, u.username ASC
+	`, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("db: failed to query conversation members: %w", err)
+	}
+	defer rows.Close()
+
+	var members []models.User
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, fmt.Errorf("db: failed to scan member: %w", err)
+		}
+		members = append(members, *user)
+	}
+	if members == nil {
+		members = []models.User{}
+	}
+	return members, rows.Err()
+}
+
+// SearchUsers finds users matching a query by username or display_name.
+func (s *Store) SearchUsers(ctx context.Context, query string) ([]models.User, error) {
+	searchPattern := "%" + query + "%"
+	rows, err := s.Pool.Query(ctx, `
+		SELECT `+userColumns+` FROM users
+		WHERE username ILIKE $1 OR display_name ILIKE $1
+		ORDER BY is_vip DESC, username ASC
+		LIMIT 20
+	`, searchPattern)
+	if err != nil {
+		return nil, fmt.Errorf("db: failed to search users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, fmt.Errorf("db: failed to scan searched user: %w", err)
+		}
+		users = append(users, *u)
+	}
+	if users == nil {
+		users = []models.User{}
+	}
+	return users, rows.Err()
 }

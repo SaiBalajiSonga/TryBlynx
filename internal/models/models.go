@@ -41,6 +41,9 @@ type User struct {
 	Language     string    `json:"language"`
 	Interests    []string  `json:"interests"`
 	IsVIP        bool      `json:"is_vip"`
+	IsAdmin      bool      `json:"is_admin"`
+	IsModerator  bool      `json:"is_moderator"`
+	IsDeveloper  bool      `json:"is_developer"`
 	Shadowbanned bool      `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`

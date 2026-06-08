@@ -156,3 +156,29 @@ func (s *Server) GetProfileByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, user)
 }
+
+// SearchUsersHandler handles GET /api/users/search?q={query}.
+//
+// Searches users by username or display_name.
+//
+// Status codes:
+//   - 200 OK:                 List of matched users.
+//   - 400 Bad Request:        Missing search query.
+//   - 500 Internal Server Error: Database failure.
+func (s *Server) SearchUsersHandler(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		respondError(w, http.StatusBadRequest, "missing search query 'q'")
+		return
+	}
+
+	users, err := s.Store.SearchUsers(r.Context(), query)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to search users")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"users": users,
+	})
+}

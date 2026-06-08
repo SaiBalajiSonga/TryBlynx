@@ -189,10 +189,10 @@ func handleChatJoin(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	// Verify membership in PostgreSQL
-	isMember, err := c.Hub.Store.IsConversationMember(context.Background(), convID, c.UserID)
+	// Auto-join if it's a public group, or verify membership for DMs
+	isMember, err := c.Hub.Store.AutoJoinPublicGroup(context.Background(), convID, c.UserID)
 	if err != nil {
-		log.Printf("ws-handler: DB error checking membership for user %s in room %s: %v",
+		log.Printf("ws-handler: DB error checking/auto-joining room for user %s in room %s: %v",
 			c.UserID, p.RoomID, err)
 		c.sendError("failed to verify room membership")
 		return

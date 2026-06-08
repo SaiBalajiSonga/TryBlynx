@@ -34,25 +34,20 @@ type sendDMRequest struct {
 
 // ListDMsHandler handles GET /api/dm/list.
 //
-// Returns all conversations the authenticated user is a member of,
-// ordered by most recent activity (newest message first). Each
-// conversation includes a preview of the last message.
-//
-// Status codes:
-//   - 200 OK:                 Conversation list returned (may be empty).
-//   - 500 Internal Server Error: Database failure.
+// Returns all DM conversations the authenticated user is a member of,
+// ordered by most recent activity. Includes the peer's profile info.
 func (s *Server) ListDMsHandler(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 
-	conversations, err := s.Store.GetUserConversations(r.Context(), userID)
+	dms, err := s.Store.GetUserDMs(r.Context(), userID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to fetch conversations")
 		return
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"conversations": conversations,
-		"count":         len(conversations),
+		"conversations": dms,
+		"count":         len(dms),
 	})
 }
 
@@ -160,8 +155,8 @@ func (s *Server) GetDMMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── Authorization: verify membership ─────────────────────
-	isMember, err := s.Store.IsConversationMember(r.Context(), convID, userID)
+	// ── Authorization: auto-join public groups or verify membership ──
+	isMember, err := s.Store.AutoJoinPublicGroup(r.Context(), convID, userID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "database error")
 		return
@@ -202,5 +197,42 @@ func (s *Server) GetDMMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"messages": msgs,
 		"count":    len(msgs),
+	})
+}
+
+// ListGroupsHandler handles GET /api/groups.
+// Returns all public group conversations available to join.
+func (s *Server) ListGroupsHandler(w http.ResponseWriter, r *http.Request) {
+	groups, err := s.Store.GetAllGroups(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to fetch groups")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"groups": groups,
+		"count":  len(groups),
+	})
+}
+
+// GetGroupMembersHandler handles GET /api/groups/{id}/members.
+// Returns all members in a conversation.
+func (s *Server) GetGroupMembersHandler(w http.ResponseWriter, r *http.Request) {
+	convIDStr := chi.URLParam(r, "id")
+	convID, err := uuid.Parse(convIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid group ID format")
+		return
+	}
+
+	members, err := s.Store.GetConversationMembers(r.Context(), convID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to fetch members")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"members": members,
+		"count":   len(members),
 	})
 }

@@ -104,10 +104,17 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 		r.Get("/api/profile", s.GetProfileHandler)
 		r.Put("/api/profile", s.UpdateProfileHandler)
 		r.Get("/api/profile/{id}", s.GetProfileByIDHandler)
+		
+		// Users
+		r.Get("/api/users/search", s.SearchUsersHandler)
 
 		// Global Feed
 		r.Get("/api/feed", s.GetFeedHandler)
 		r.Post("/api/feed", s.CreateFeedPostHandler)
+
+		// Public Groups
+		r.Get("/api/groups", s.ListGroupsHandler)
+		r.Get("/api/groups/{id}/members", s.GetGroupMembersHandler)
 
 		// Direct Messages
 		r.Get("/api/dm/list", s.ListDMsHandler)

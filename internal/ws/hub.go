@@ -30,6 +30,7 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sync"
 
@@ -324,6 +325,16 @@ func (h *Hub) handleJoinRoom(req *RoomRequest) {
 // Pub/Sub channel and cleans up the room map entry.
 func (h *Hub) handleLeaveRoom(req *RoomRequest) {
 	if clients, ok := h.rooms[req.RoomID]; ok {
+		// Broadcast peer_left before removing
+		outbound := OutboundMessage{
+			Type: "chat.peer_left",
+			Payload: map[string]string{
+				"peer_id": req.Client.UserID.String(),
+			},
+		}
+		outData, _ := json.Marshal(outbound)
+		h.RDB.Publish(h.ctx, req.RoomID, outData)
+
 		delete(clients, req.Client)
 		if len(clients) == 0 {
 			delete(h.rooms, req.RoomID)
@@ -381,6 +392,16 @@ func (h *Hub) handleRedisMessage(msg *redis.Message) {
 func (h *Hub) removeClientFromAllRooms(client *Client) {
 	for roomID, clients := range h.rooms {
 		if _, ok := clients[client]; ok {
+			// Broadcast peer_left before removing
+			outbound := OutboundMessage{
+				Type: "chat.peer_left",
+				Payload: map[string]string{
+					"peer_id": client.UserID.String(),
+				},
+			}
+			outData, _ := json.Marshal(outbound)
+			h.RDB.Publish(h.ctx, roomID, outData)
+
 			delete(clients, client)
 			if len(clients) == 0 {
 				delete(h.rooms, roomID)
