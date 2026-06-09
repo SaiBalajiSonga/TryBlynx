@@ -1,7 +1,8 @@
 import { useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
-import { Save, Plus, X, User, Sliders, CheckCircle } from 'lucide-react';
+import { Save, Plus, X, User, Sliders, CheckCircle, Upload } from 'lucide-react';
+import { processAndModerateAvatar } from '../lib/moderation';
 
 export function SettingsView() {
   const { user, updateUser } = useAuthStore();
@@ -12,9 +13,34 @@ export function SettingsView() {
   const [newInterest, setNewInterest] = useState('');
   const [location, setLocation] = useState(user?.location || '');
   const [language, setLanguage] = useState(user?.language || '');
+  const [avatarUrl, setAvatarUrl] = useState(user?.avatar_url || '');
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingAvatar(true);
+    setError('');
+
+    try {
+      const result = await processAndModerateAvatar(file);
+      if (!result.isSafe) {
+        setError(result.reason || 'Image rejected by safety filter.');
+        return;
+      }
+      if (result.base64Image) {
+        setAvatarUrl(result.base64Image);
+      }
+    } catch (err: any) {
+      setError(err.toString());
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
 
   const handleAddInterest = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && newInterest.trim()) {
@@ -33,7 +59,7 @@ export function SettingsView() {
     setError('');
 
     try {
-      const payload = { display_name: displayName, bio, gender, location, language, interests };
+      const payload = { display_name: displayName, bio, gender, location, language, interests, avatar_url: avatarUrl };
       await api.updateProfile(payload);
       updateUser(payload);
       setSaved(true);
@@ -107,6 +133,41 @@ export function SettingsView() {
           {/* Identity */}
           <div style={{ background: 'var(--blynx-800)', border: '1px solid var(--border)', borderRadius: '14px', padding: '20px', marginBottom: '16px' }}>
             {sectionHead(User, 'Identity')}
+
+            <div style={{ marginBottom: '14px' }}>
+              {label('Avatar (PFP)')}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{
+                  width: '64px', height: '64px', borderRadius: '50%', background: 'var(--blynx-700)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+                  border: '2px solid rgba(255,255,255,0.1)'
+                }}>
+                  {avatarUrl ? (
+                    <img src={avatarUrl} alt="Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <User size={32} color="var(--text-muted)" />
+                  )}
+                </div>
+                <div>
+                  <label style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
+                    background: 'var(--blynx-700)', padding: '8px 16px', borderRadius: '8px',
+                    fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)',
+                    border: '1px solid var(--border)', transition: 'background 0.1s'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--blynx-600)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'var(--blynx-700)'}
+                  >
+                    {isUploadingAvatar ? (
+                       <div style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%' }} className="animate-spin-slow" />
+                    ) : <Upload size={14} />}
+                    {isUploadingAvatar ? 'Checking image...' : 'Upload Image'}
+                    <input type="file" accept="image/png, image/jpeg, image/webp" style={{ display: 'none' }} onChange={handleAvatarUpload} disabled={isUploadingAvatar} />
+                  </label>
+                  <p style={{ margin: '6px 0 0', fontSize: '11px', color: 'var(--text-muted)' }}>AI Moderation is active. NSFW images will be rejected.</p>
+                </div>
+              </div>
+            </div>
 
             <div style={{ marginBottom: '14px' }}>
               {label('Display Name')}

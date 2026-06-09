@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { Zap, Mail, Lock, User, AlertCircle, ArrowRight } from 'lucide-react';
+import { getDeviceFingerprint } from '../lib/fingerprint';
 
 const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8080/api';
 
@@ -20,9 +21,10 @@ export function AuthForm() {
 
     try {
       const endpoint = isLogin ? '/login' : '/register';
+      const fingerprint = await getDeviceFingerprint();
       const body = isLogin
-        ? JSON.stringify({ email, password })
-        : JSON.stringify({ email, password, username });
+        ? JSON.stringify({ email, password, fingerprint })
+        : JSON.stringify({ email, password, username, fingerprint });
 
       const res = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
