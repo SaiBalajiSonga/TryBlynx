@@ -156,7 +156,7 @@ func (s *Server) GetDMMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Authorization: auto-join public groups or verify membership ──
-	isMember, err := s.Store.AutoJoinPublicGroup(r.Context(), convID, userID)
+	isMember, err := s.Store.CheckPublicGroupAccess(r.Context(), convID, userID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "database error")
 		return
@@ -216,7 +216,7 @@ func (s *Server) ListGroupsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetGroupMembersHandler handles GET /api/groups/{id}/members.
-// Returns all members in a conversation.
+// Returns all active live members currently looking at the conversation.
 func (s *Server) GetGroupMembersHandler(w http.ResponseWriter, r *http.Request) {
 	convIDStr := chi.URLParam(r, "id")
 	convID, err := uuid.Parse(convIDStr)
@@ -225,9 +225,17 @@ func (s *Server) GetGroupMembersHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	members, err := s.Store.GetConversationMembers(r.Context(), convID)
+	// 1. Fetch live user IDs from Redis presence
+	activeUserIDs, err := s.Store.GetRoomPresenceUsers(r.Context(), convID.String())
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to fetch members")
+		respondError(w, http.StatusInternalServerError, "failed to fetch live presence")
+		return
+	}
+
+	// 2. Fetch full user models from PostgreSQL
+	members, err := s.Store.GetUsersByIDs(r.Context(), activeUserIDs)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to fetch member details")
 		return
 	}
 

@@ -148,6 +148,15 @@ func (c *Client) ReadPump() {
 		// 1. Remove matchmaking ticket (if queued)
 		c.cleanupMatchTicket()
 
+		// 1b. Remove from Redis presence for all joined rooms
+		for roomKey := range c.joinedRooms {
+			// Extract UUID from "chat:room:<uuid>"
+			if len(roomKey) > 10 {
+				roomID := roomKey[10:]
+				c.Hub.Store.RemoveRoomPresence(context.Background(), roomID, c.UserID)
+			}
+		}
+
 		// 2. Unregister from Hub (triggers room cleanup)
 		c.Hub.unregister <- c
 

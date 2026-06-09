@@ -21,26 +21,29 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"tryblynx/internal/models"
 )
 
-// Store wraps a PostgreSQL connection pool and provides typed
+// Store wraps a PostgreSQL connection pool and a Redis client, providing typed
 // query methods for all database operations. It is the single
 // entry point for data access throughout the application.
 type Store struct {
-	Pool *pgxpool.Pool
+	Pool  *pgxpool.Pool
+	Redis *redis.Client
 }
 
-// NewStore creates a new Store backed by the provided connection pool.
+// NewStore creates a new Store backed by the provided connection pool and redis client.
 //
 // Parameters:
 //   - pool: An initialized pgxpool.Pool (created via db.NewPool).
+//   - rdb: An initialized redis.Client.
 //
 // Returns:
 //   - *Store: Ready for concurrent use across goroutines.
-func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{Pool: pool}
+func NewStore(pool *pgxpool.Pool, rdb *redis.Client) *Store {
+	return &Store{Pool: pool, Redis: rdb}
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -325,8 +328,14 @@ func (s *Store) GetFeedPosts(ctx context.Context, cursor time.Time, limit int) (
 //   - *models.Message: The persisted message with generated ID and timestamp.
 //   - error:           Non-nil on FK violation or connection error.
 func (s *Store) CreateMessage(ctx context.Context, conversationID, senderID uuid.UUID, body string) (*models.Message, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("db: failed to begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	var m models.Message
-	err := s.Pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO messages (conversation_id, sender_id, body)
 		VALUES ($1, $2, $3)
 		RETURNING id, conversation_id, sender_id, body, created_at`,
@@ -335,6 +344,22 @@ func (s *Store) CreateMessage(ctx context.Context, conversationID, senderID uuid
 	if err != nil {
 		return nil, fmt.Errorf("db: failed to create message: %w", err)
 	}
+
+	// Also ensure the sender is a member of the conversation
+	_, err = tx.Exec(ctx, `
+		INSERT INTO conversation_members (conversation_id, user_id)
+		VALUES ($1, $2)
+		ON CONFLICT DO NOTHING`,
+		conversationID, senderID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db: failed to add member: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("db: failed to commit tx: %w", err)
+	}
+
 	return &m, nil
 }
 
@@ -355,10 +380,12 @@ func (s *Store) GetMessages(ctx context.Context, conversationID uuid.UUID, curso
 	}
 
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id, conversation_id, sender_id, body, created_at
-		FROM messages
-		WHERE conversation_id = $1 AND created_at < $2
-		ORDER BY created_at DESC
+		SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at,
+		       COALESCE(u.display_name, u.username, 'User') AS sender_name
+		FROM messages m
+		LEFT JOIN users u ON m.sender_id = u.id
+		WHERE m.conversation_id = $1 AND m.created_at < $2
+		ORDER BY m.created_at DESC
 		LIMIT $3`,
 		conversationID, cursor, limit,
 	)
@@ -370,8 +397,12 @@ func (s *Store) GetMessages(ctx context.Context, conversationID uuid.UUID, curso
 	var msgs []models.Message
 	for rows.Next() {
 		var m models.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &m.CreatedAt); err != nil {
+		var senderName *string
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &m.CreatedAt, &senderName); err != nil {
 			return nil, fmt.Errorf("db: failed to scan message: %w", err)
+		}
+		if senderName != nil {
+			m.SenderName = *senderName
 		}
 		msgs = append(msgs, m)
 	}
@@ -433,11 +464,9 @@ func (s *Store) IsConversationMember(ctx context.Context, conversationID, userID
 	return exists, err
 }
 
-// AutoJoinPublicGroup checks if the conversation is a public group, and if so,
-// inserts the user into conversation_members, returning true. If it's a DM, it
-// delegates to IsConversationMember.
+// CheckPublicGroupAccess checks if the conversation is a public group.
 // Used for frictionless public group chat access.
-func (s *Store) AutoJoinPublicGroup(ctx context.Context, conversationID, userID uuid.UUID) (bool, error) {
+func (s *Store) CheckPublicGroupAccess(ctx context.Context, conversationID, userID uuid.UUID) (bool, error) {
 	var convType string
 	err := s.Pool.QueryRow(ctx, `SELECT type FROM conversations WHERE id = $1`, conversationID).Scan(&convType)
 	if err != nil {
@@ -448,15 +477,6 @@ func (s *Store) AutoJoinPublicGroup(ctx context.Context, conversationID, userID 
 	}
 
 	if convType == "group" {
-		// It's a public group, automatically insert the member and ignore if they already exist
-		_, err := s.Pool.Exec(ctx, `
-			INSERT INTO conversation_members (conversation_id, user_id)
-			VALUES ($1, $2)
-			ON CONFLICT (conversation_id, user_id) DO NOTHING
-		`, conversationID, userID)
-		if err != nil {
-			return false, fmt.Errorf("db: failed to auto-join group: %w", err)
-		}
 		return true, nil
 	}
 
@@ -530,10 +550,10 @@ func (s *Store) GetUserConversations(ctx context.Context, userID uuid.UUID) ([]m
 // GetAllGroups retrieves all group chats available on the server.
 func (s *Store) GetAllGroups(ctx context.Context) ([]models.Conversation, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id, type, COALESCE(name, '') AS name, created_at
-		FROM conversations
-		WHERE type = 'group'
-		ORDER BY created_at ASC
+		SELECT c.id, c.type, COALESCE(c.name, '') AS name, c.created_at
+		FROM conversations c
+		WHERE c.type = 'group'
+		ORDER BY c.created_at ASC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("db: failed to query groups: %w", err)
@@ -546,6 +566,11 @@ func (s *Store) GetAllGroups(ctx context.Context) ([]models.Conversation, error)
 		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("db: failed to scan group: %w", err)
 		}
+		
+		// Fetch live presence count from Redis
+		count, _ := s.GetRoomPresenceCount(ctx, c.ID.String())
+		c.MemberCount = count
+		
 		groups = append(groups, c)
 	}
 	if groups == nil {
@@ -638,6 +663,53 @@ func (s *Store) GetConversationMembers(ctx context.Context, conversationID uuid.
 		members = []models.User{}
 	}
 	return members, rows.Err()
+}
+
+// GetUsersByIDs retrieves a list of users by their UUIDs, ordered by VIP/Admin status and then username.
+func (s *Store) GetUsersByIDs(ctx context.Context, userIDs []uuid.UUID) ([]models.User, error) {
+	if len(userIDs) == 0 {
+		return []models.User{}, nil
+	}
+
+	rows, err := s.Pool.Query(ctx, `
+		SELECT id, username, email, password_hash,
+			COALESCE(display_name, '') AS display_name,
+			COALESCE(avatar_url, '') AS avatar_url,
+			COALESCE(bio, '') AS bio,
+			gender, location, language, interests,
+			is_vip, is_admin, is_moderator, is_developer, shadowbanned,
+			created_at, updated_at
+		FROM users
+		WHERE id = ANY($1)
+		ORDER BY is_admin DESC, is_moderator DESC, is_vip DESC, username ASC
+	`, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("db: failed to query users by IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		var u models.User
+		if err := rows.Scan(
+			&u.ID, &u.Username, &u.Email, &u.PasswordHash,
+			&u.DisplayName, &u.AvatarURL, &u.Bio,
+			&u.Gender, &u.Location, &u.Language, &u.Interests,
+			&u.IsVIP, &u.IsAdmin, &u.IsModerator, &u.IsDeveloper, &u.Shadowbanned,
+			&u.CreatedAt, &u.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("db: failed to scan user: %w", err)
+		}
+		if u.Interests == nil {
+			u.Interests = []string{}
+		}
+		u.PasswordHash = "" // Clear sensitive data
+		users = append(users, u)
+	}
+	if users == nil {
+		users = []models.User{}
+	}
+	return users, rows.Err()
 }
 
 // SearchUsers finds users matching a query by username or display_name.

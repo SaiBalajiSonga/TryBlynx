@@ -57,10 +57,11 @@ type User struct {
 // distinguishes between "dm", "group", and "random" (matchmaker)
 // conversations. Maps to 002_create_messages.sql.
 type Conversation struct {
-	ID        uuid.UUID `json:"id"`
-	Type      string    `json:"type"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          uuid.UUID `json:"id"`
+	Type        string    `json:"type"`
+	Name        string    `json:"name,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	MemberCount int       `json:"member_count,omitempty"`
 }
 
 // ConversationSummary extends Conversation with the most recent
@@ -78,6 +79,7 @@ type Message struct {
 	ID             uuid.UUID  `json:"id"`
 	ConversationID uuid.UUID  `json:"conversation_id"`
 	SenderID       *uuid.UUID `json:"sender_id,omitempty"`
+	SenderName     string     `json:"sender_name,omitempty"`
 	Body           string     `json:"body"`
 	CreatedAt      time.Time  `json:"created_at"`
 }

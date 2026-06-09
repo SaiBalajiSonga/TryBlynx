@@ -190,7 +190,7 @@ func handleChatJoin(c *Client, payload json.RawMessage) {
 	}
 
 	// Auto-join if it's a public group, or verify membership for DMs
-	isMember, err := c.Hub.Store.AutoJoinPublicGroup(context.Background(), convID, c.UserID)
+	isMember, err := c.Hub.Store.CheckPublicGroupAccess(context.Background(), convID, c.UserID)
 	if err != nil {
 		log.Printf("ws-handler: DB error checking/auto-joining room for user %s in room %s: %v",
 			c.UserID, p.RoomID, err)
@@ -214,6 +214,11 @@ func handleChatJoin(c *Client, payload json.RawMessage) {
 
 	// Track locally for fast membership checks in chat.message
 	c.joinedRooms[roomKey] = true
+
+	// Add to Redis live presence tracking
+	if err := c.Hub.Store.AddRoomPresence(context.Background(), p.RoomID, c.UserID); err != nil {
+		log.Printf("ws-handler: failed to add room presence: %v", err)
+	}
 
 	c.sendJSON(OutboundMessage{
 		Type: "chat.joined",
@@ -314,6 +319,11 @@ func handleChatLeave(c *Client, payload json.RawMessage) {
 			"status":  "left",
 		},
 	})
+
+	// Remove from Redis live presence tracking
+	if err := c.Hub.Store.RemoveRoomPresence(context.Background(), p.RoomID, c.UserID); err != nil {
+		log.Printf("ws-handler: failed to remove room presence: %v", err)
+	}
 }
 
 // ══════════════════════════════════════════════════════════════

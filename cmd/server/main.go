@@ -54,22 +54,22 @@ func main() {
 	}
 	log.Printf("config: loaded (port=%s, jwt_expiry=%dh)", cfg.ServerPort, cfg.JWTExpiryHours)
 
-	// ── 2. Connect to PostgreSQL ─────────────────────────────
-	pool, err := db.NewPool(context.Background(), cfg)
-	if err != nil {
-		log.Fatalf("postgres: %v", err)
-	}
-	defer pool.Close()
-	store := db.NewStore(pool)
-	log.Println("postgres: connected")
-
-	// ── 3. Connect to Redis ──────────────────────────────────
+	// ── 2. Connect to Redis ──────────────────────────────────
 	rdb, err := redisclient.NewClient(cfg.RedisURL)
 	if err != nil {
 		log.Fatalf("redis: %v", err)
 	}
 	defer rdb.Close()
 	log.Println("redis: connected")
+
+	// ── 3. Connect to PostgreSQL ─────────────────────────────
+	pool, err := db.NewPool(context.Background(), cfg)
+	if err != nil {
+		log.Fatalf("postgres: %v", err)
+	}
+	defer pool.Close()
+	store := db.NewStore(pool, rdb)
+	log.Println("postgres: connected")
 
 	// ── 4. Create HTTP API Server ────────────────────────────
 	apiServer := api.NewServer(cfg, store)
