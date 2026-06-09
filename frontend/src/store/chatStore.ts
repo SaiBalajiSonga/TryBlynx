@@ -46,29 +46,41 @@ export const useChatStore = create<ChatState>((set) => ({
   dmMessages: {},
 
   setWsStatus: (status) => set({ wsStatus: status }),
-  setMatchStatus: (status, targetGender) => set({ matchStatus: status, targetGender: targetGender || null }),
+  setMatchStatus: (status, targetGender) => set({ matchStatus: status, targetGender: targetGender ?? null }),
   setActiveRoomId: (roomId) => set({ activeRoomId: roomId }),
   setMatchPeerId: (id) => set({ matchPeerId: id }),
-  addMessage: (roomId, message) => set((state) => ({
-    messages: {
-      ...state.messages,
-      [roomId]: [...(state.messages[roomId] || []), message]
-    }
-  })),
-  addDMMessage: (conversationId, message) => set((state) => ({
-    dmMessages: {
-      ...state.dmMessages,
-      [conversationId]: [...(state.dmMessages[conversationId] || []), message]
-    }
-  })),
+
+  addMessage: (roomId, message) => set((state) => {
+    const existing = state.messages[roomId] || [];
+    // FIX: Deduplicate — REST history load + WS delivery can both fire for the same msg
+    if (existing.some(m => m.message_id === message.message_id)) return state;
+    return {
+      messages: {
+        ...state.messages,
+        // Cap per-room at 500 messages for memory efficiency at scale
+        [roomId]: [...existing, message].slice(-500),
+      }
+    };
+  }),
+
+  addDMMessage: (conversationId, message) => set((state) => {
+    const existing = state.dmMessages[conversationId] || [];
+    if (existing.some(m => m.message_id === message.message_id)) return state;
+    return {
+      dmMessages: {
+        ...state.dmMessages,
+        [conversationId]: [...existing, message].slice(-500),
+      }
+    };
+  }),
+
   clearChat: () => set({
-    // FIX: Do NOT reset wsStatus here — the WebSocket connection is
-    // still alive when leaving a chat. Only reset chat-specific state.
     matchStatus: 'idle',
     targetGender: null,
     activeRoomId: null,
     matchPeerId: null,
     messages: {},
-    dmMessages: {}
-  })
+    dmMessages: {},
+    // wsStatus intentionally NOT reset — connection stays alive
+  }),
 }));
