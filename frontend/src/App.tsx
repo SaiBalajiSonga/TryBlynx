@@ -1,11 +1,25 @@
-import { useAuthStore } from './store/authStore'
-import { AuthForm } from './components/AuthForm'
-import { Dashboard } from './components/Dashboard'
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { useAuthStore } from './store/authStore';
+import { AuthForm } from './components/AuthForm';
+import { Dashboard } from './components/Dashboard';
+import { LandingPage } from './components/LandingPage';
+import { TermsOfService } from './components/TermsOfService';
+import { PrivacyPolicy } from './components/PrivacyPolicy';
 
 function App() {
-  const token = useAuthStore((state) => state.token)
+  const token = useAuthStore((state) => state.token);
 
-  return token ? <Dashboard /> : <AuthForm />
+  return (
+    <Routes>
+      <Route path="/" element={token ? <Navigate to="/app" /> : <LandingPage />} />
+      <Route path="/auth" element={token ? <Navigate to="/app" /> : <AuthForm />} />
+      <Route path="/terms" element={<TermsOfService />} />
+      <Route path="/privacy" element={<PrivacyPolicy />} />
+      <Route path="/app/*" element={token ? <Dashboard /> : <Navigate to="/auth" />} />
+      {/* Catch-all */}
+      <Route path="*" element={<Navigate to="/" />} />
+    </Routes>
+  );
 }
 
-export default App
+export default App;

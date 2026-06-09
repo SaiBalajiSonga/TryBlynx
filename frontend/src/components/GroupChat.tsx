@@ -1,10 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Users, Hash, Loader, Send, Crown, Shield, Star, Terminal, Reply, X } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
+import { Users, Hash, Loader, Send, Crown, Shield, Star, Terminal, Reply, X, Plus, Settings as SettingsIcon, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
 import { useWebSocket } from '../lib/useWebSocket';
+import { GroupSettingsModal } from './GroupSettingsModal';
+import { MarkdownRenderer } from './MarkdownRenderer';
+
+interface GroupChatProps {
+  onUserClick?: (userId: string) => void;
+}
 
 // Stable empty array — never recreated, prevents Zustand getSnapshot infinite loop
 const EMPTY_MESSAGES: import('../store/chatStore').ChatMessage[] = [];
@@ -23,7 +29,7 @@ const parseMessageBody = (rawBody: string) => {
     return { isReply: false, replyContext: null, actualBody: rawBody };
 };
 
-export function GroupChat() {
+export function GroupChat({ onUserClick }: GroupChatProps) {
   const navigate = useNavigate();
   const { id } = useParams();
   const user = useAuthStore(s => s.user);
@@ -33,9 +39,12 @@ export function GroupChat() {
   const [loadingGroups, setLoadingGroups] = useState(true);
   const [members, setMembers] = useState<any[]>([]);
   const [showMembers, setShowMembers] = useState(true);
+  const [showSettingsModal, setShowSettingsModal] = useState<false | 'create' | 'edit'>(false);
   const [newMessage, setNewMessage] = useState('');
-  const [replyTo, setReplyTo] = useState<import('../store/chatStore').ChatMessage | null>(null);
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editBody, setEditBody] = useState<string>('');
+  const [replyTo, setReplyTo] = useState<import('../store/chatStore').ChatMessage | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   // Track which rooms we've joined so we don't double-join
@@ -48,21 +57,22 @@ export function GroupChat() {
   const wsMessages = useChatStore(s => s.messages[id ?? ''] ?? EMPTY_MESSAGES);
   const wsStatus = useChatStore(s => s.wsStatus);
 
+  const fetchGroups = useCallback(() => {
+    api.getGroups()
+      .then(res => {
+        const gs = res.groups || [];
+        setGroups(gs);
+        if (!id && gs.length > 0) {
+          const def = gs.find((g: any) => g.name === 'General') || gs[0];
+          navigate(`/groups/${def.id}`, { replace: true });
+        }
+      })
+      .catch(err => console.error('Failed to load groups:', err))
+      .finally(() => setLoadingGroups(false));
+  }, [id, navigate]);
+
   // Fetch groups list and poll for member count updates
   useEffect(() => {
-    const fetchGroups = () => {
-      api.getGroups()
-        .then(res => {
-          const gs = res.groups || [];
-          setGroups(gs);
-          if (!id && gs.length > 0) {
-            const def = gs.find((g: any) => g.name === 'General') || gs[0];
-            navigate(`/groups/${def.id}`, { replace: true });
-          }
-        })
-        .catch(err => console.error('Failed to load groups:', err))
-        .finally(() => setLoadingGroups(false));
-    };
 
     fetchGroups();
     const groupPoll = setInterval(fetchGroups, 3_000);
@@ -125,6 +135,7 @@ export function GroupChat() {
               sender_name: m.sender_name || m.username || 'User',
               room_id:    id,
               body:       m.body || m.content,
+              is_edited:  !!m.is_edited,
               created_at: m.created_at,
             });
           });
@@ -146,24 +157,27 @@ export function GroupChat() {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [wsMessages.length]);
 
-  const handleSend = useCallback(() => {
+  const handleSend = () => {
     if (!newMessage.trim() || !id) return;
-    
-    let finalMessage = newMessage.trim();
-    if (replyTo) {
-        const { actualBody } = parseMessageBody(replyTo.body);
-        const replyContext = {
-            id: replyTo.message_id,
-            name: replyTo.sender_name,
-            text: actualBody.substring(0, 60) + (actualBody.length > 60 ? '...' : '')
-        };
-        finalMessage = `$$REPLY$$${JSON.stringify(replyContext)}$$${finalMessage}`;
-    }
-
-    sendMessage('chat.message', { room_id: id, body: finalMessage });
+    const body = replyTo ? `$$REPLY$$$${JSON.stringify({id: replyTo.message_id, name: replyTo.sender_name, text: replyTo.body.substring(0, 30).replace(/"/g, '\\"')})}...$$$$${newMessage}` : newMessage;
+    sendMessage('chat.message', { room_id: id, body });
     setNewMessage('');
     setReplyTo(null);
-  }, [newMessage, id, sendMessage, replyTo]);
+  };
+
+  const handleEditSave = (msgId: string) => {
+    if (!editBody.trim() || !id) return;
+    sendMessage('chat.edit', { room_id: id, message_id: msgId, body: editBody });
+    setEditingMsgId(null);
+    setEditBody('');
+  };
+
+  const handleDelete = (msgId: string) => {
+    if (!id) return;
+    if (confirm('Are you sure you want to delete this message?')) {
+      sendMessage('chat.delete', { room_id: id, message_id: msgId });
+    }
+  };
 
   const activeGroup = groups.find(g => g.id === id);
 
@@ -180,8 +194,13 @@ export function GroupChat() {
 
       {/* ── LEFT: Group List ── */}
       <div style={{ width: '220px', borderRight: '1px solid var(--border)', background: 'var(--blynx-850)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-        <div style={{ padding: '20px 16px 12px 16px' }}>
+        <div style={{ padding: '20px 16px 12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ margin: 0, fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Channels</h2>
+          {user?.is_admin && (
+            <button onClick={() => setShowSettingsModal('create')} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0' }} title="Create Channel">
+              <Plus size={14} />
+            </button>
+          )}
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px' }}>
           {loadingGroups
@@ -236,8 +255,25 @@ export function GroupChat() {
                   {activeGroup.name.charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <h2 style={{ margin: 0, fontSize: '15px', color: 'white', fontWeight: 600 }}>{activeGroup.name}</h2>
-                  <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{members.length} members</div>
+                  <h2 style={{ margin: 0, fontSize: '15px', color: 'white', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {activeGroup.name}
+                    {user?.is_admin && (
+                      <button onClick={() => setShowSettingsModal('edit')} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: '0' }} title="Edit Channel Settings">
+                        <SettingsIcon size={14} />
+                      </button>
+                    )}
+                  </h2>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '11px', marginTop: '2px' }}>
+                    <span>{members.length} members</span>
+                    {activeGroup.is_nsfw && <span style={{ background: 'rgba(237,66,69,0.1)', color: '#ed4245', padding: '1px 4px', borderRadius: '4px', fontSize: '9px', fontWeight: 800 }}>NSFW</span>}
+                    {activeGroup.slowmode_seconds > 0 && <span style={{ background: 'rgba(88,101,242,0.1)', color: 'var(--accent)', padding: '1px 4px', borderRadius: '4px', fontSize: '9px', fontWeight: 800 }}>SLOWMODE: {activeGroup.slowmode_seconds}s</span>}
+                    {activeGroup.description && (
+                      <>
+                        <span style={{ width: '3px', height: '3px', background: 'var(--text-muted)', borderRadius: '50%' }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>{activeGroup.description}</span>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
               <button onClick={() => setShowMembers(s => !s)} style={{
@@ -259,156 +295,185 @@ export function GroupChat() {
               ) : (
                 wsMessages.map((msg, i) => {
                   const { isReply, replyContext, actualBody } = parseMessageBody(msg.body);
-                  const isMe = msg.sender_id === user?.id;
                   const prev = wsMessages[i - 1];
-                  const next = wsMessages[i + 1];
                   // Group boundary detection
                   const isGroupStart = !prev || prev.sender_id !== msg.sender_id;
-                  const isGroupEnd   = !next || next.sender_id !== msg.sender_id;
-                  const isSolo       = isGroupStart && isGroupEnd;
-                  // Instagram bubble radius rules:
-                  // Solo:       full round (18px all)
-                  // Group start (top):   top corners round, bottom-inner square
-                  // Group middle:        inner side square top & bottom
-                  // Group end (bottom):  top-inner square, bottom corners round
-                  const r = '18px';
-                  const s = '4px'; // squared corner
-                  let borderRadius: string;
-                  if (isMe) {
-                    // My bubbles: stack on the RIGHT, so right corners flatten
-                    if (isSolo)             borderRadius = `${r} ${r} ${r} ${r}`;
-                    else if (isGroupStart)  borderRadius = `${r} ${r} ${s} ${r}`; // TR(r), BR(s)
-                    else if (isGroupEnd)    borderRadius = `${r} ${s} ${r} ${r}`; // TR(s), BR(r)
-                    else                    borderRadius = `${r} ${s} ${s} ${r}`; // TR(s), BR(s)
-                  } else {
-                    // Their bubbles: stack on the LEFT, so left corners flatten
-                    if (isSolo)             borderRadius = `${r} ${r} ${r} ${r}`;
-                    else if (isGroupStart)  borderRadius = `${r} ${r} ${r} ${s}`; // TL(r), BL(s)
-                    else if (isGroupEnd)    borderRadius = `${s} ${r} ${r} ${r}`; // TL(s), BL(r)
-                    else                    borderRadius = `${s} ${r} ${r} ${s}`; // TL(s), BL(s)
-                  }
-                  // Vertical spacing: new group gets more breathing room
-                  const marginTop = isGroupStart ? '20px' : '2px';
+                  
                   return (
-                    <div
-                      key={msg.message_id}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'row',
-                        alignItems: 'flex-end', // avatar aligns to bottom of group
-                        gap: '8px',
-                        marginTop,
-                        // Right-align my messages
-                        justifyContent: isMe ? 'flex-end' : 'flex-start',
+                    <Fragment key={msg.message_id}>
+                      {isGroupStart && i > 0 && (
+                        <div style={{ height: '1px', margin: '8px 16px 7px 16px' }} />
+                      )}
+                      <div
+                        onMouseEnter={() => setHoveredMsgId(msg.message_id)}
+                        onMouseLeave={() => setHoveredMsgId(null)}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'row',
+                          alignItems: 'flex-start',
+                          padding: '2px 16px',
+                          marginTop: isGroupStart && i === 0 ? '16px' : '0',
+                        background: hoveredMsgId === msg.message_id ? 'rgba(255,255,255,0.03)' : 'transparent',
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        position: 'relative'
                       }}
                     >
-                      {/* Avatar column — only for others, only shown on last bubble of group */}
-                      {!isMe && (
-                        <div style={{ width: '28px', flexShrink: 0, alignSelf: 'flex-end', marginBottom: '4px' }}>
-                          {isGroupEnd ? (
-                            <div style={{
-                              width: '28px', height: '28px', borderRadius: '50%',
-                              background: 'var(--blynx-600)',
-                              border: '1px solid rgba(255,255,255,0.05)',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              color: 'white', fontWeight: 600, fontSize: '11px',
-                              flexShrink: 0,
-                            }}>
-                              {(msg.sender_name || 'U').charAt(0).toUpperCase()}
+                      {/* Avatar column */}
+                      <div style={{ width: '56px', flexShrink: 0, marginRight: '16px', display: 'flex', justifyContent: 'center' }}>
+                        {isGroupStart ? (
+                          <div 
+                            onClick={() => onUserClick && msg.sender_id && onUserClick(msg.sender_id)}
+                            style={{
+                            width: '48px', height: '48px', borderRadius: '50%',
+                            background: 'var(--blynx-600)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            color: 'white', fontWeight: 600, fontSize: '18px',
+                            cursor: 'pointer'
+                          }}>
+                            {(msg.sender_name || 'U').charAt(0).toUpperCase()}
+                          </div>
+                        ) : (
+                          <div style={{ 
+                            width: '100%', textAlign: 'center', fontSize: '10px', 
+                            color: 'var(--text-muted)', 
+                            opacity: hoveredMsgId === msg.message_id ? 1 : 0,
+                            lineHeight: '22px', // align with first line of text
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Content column */}
+                      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                        {isGroupStart && (
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '2px' }}>
+                            <span style={{ fontSize: '15px', fontWeight: 500, color: 'white', cursor: 'pointer' }}
+                                  onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                                  onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                                  onClick={() => onUserClick && msg.sender_id && onUserClick(msg.sender_id)}
+                            >
+                              {msg.sender_name}
+                            </span>
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                              {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        )}
+
+                        {isReply && replyContext && (
+                          <div style={{
+                            fontSize: '13px', color: 'var(--text-muted)', 
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            cursor: 'pointer'
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.color = 'white'}
+                          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
+                          >
+                            <Reply size={14} />
+                            <strong>@{replyContext.name}</strong> {replyContext.text}
+                          </div>
+                        )}
+
+                        <div style={{ 
+                          color: '#dcddde', 
+                          fontSize: '15px', 
+                          lineHeight: '22px', 
+                          wordBreak: 'break-word',
+                          whiteSpace: 'pre-wrap'
+                        }}>
+                          {editingMsgId === msg.message_id ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                              <input
+                                autoFocus
+                                value={editBody}
+                                onChange={e => setEditBody(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' && !e.shiftKey) handleEditSave(msg.message_id);
+                                  if (e.key === 'Escape') { setEditingMsgId(null); setEditBody(''); }
+                                }}
+                                style={{ background: 'var(--blynx-800)', border: '1px solid var(--border)', borderRadius: '4px', color: 'white', padding: '8px', fontSize: '14px', outline: 'none' }}
+                              />
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                escape to <span style={{ color: '#00aff4', cursor: 'pointer' }} onClick={() => setEditingMsgId(null)}>cancel</span> • enter to <span style={{ color: '#00aff4', cursor: 'pointer' }} onClick={() => handleEditSave(msg.message_id)}>save</span>
+                              </span>
                             </div>
                           ) : (
-                            // Invisible spacer — keeps bubbles left-aligned even without avatar
-                            <div style={{ width: '28px' }} />
+                            <>
+                              <MarkdownRenderer content={actualBody} />
+                              {msg.is_edited && (
+                                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>(edited)</span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Floating Actions */}
+                      {hoveredMsgId === msg.message_id && (
+                        <div style={{
+                          position: 'absolute',
+                          right: '16px',
+                          top: '-12px',
+                          background: 'var(--blynx-800)',
+                          border: '1px solid var(--border)',
+                          borderRadius: '4px',
+                          display: 'flex',
+                          overflow: 'hidden',
+                          boxShadow: '0 0 0 1px rgba(0,0,0,0.1), 0 2px 4px rgba(0,0,0,0.1)'
+                        }}>
+                          <button
+                            onClick={() => setReplyTo(msg)}
+                            style={{
+                              background: 'transparent', border: 'none',
+                              padding: '4px 8px', cursor: 'pointer', color: 'var(--text-secondary)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center'
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--blynx-700)'; e.currentTarget.style.color = 'white'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                            title="Reply"
+                          >
+                            <Reply size={16} />
+                          </button>
+                          {msg.sender_id === user?.id && (
+                            <>
+                              <button
+                                onClick={() => { setEditingMsgId(msg.message_id); setEditBody(actualBody); }}
+                                style={{
+                                  background: 'transparent', border: 'none', borderLeft: '1px solid var(--border)',
+                                  padding: '4px 8px', cursor: 'pointer', color: 'var(--text-secondary)',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'var(--blynx-700)'; e.currentTarget.style.color = 'white'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                                title="Edit"
+                              >
+                                <Pencil size={16} />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(msg.message_id)}
+                                style={{
+                                  background: 'transparent', border: 'none', borderLeft: '1px solid var(--border)',
+                                  padding: '4px 8px', cursor: 'pointer', color: '#ed4245',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.background = '#ed4245'; e.currentTarget.style.color = 'white'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#ed4245'; }}
+                                title="Delete"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </>
                           )}
                         </div>
                       )}
-
-                      {/* Bubble + optional name header */}
-                      <div 
-                        style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '72%', position: 'relative' }}
-                        onMouseEnter={() => setHoveredMsgId(msg.message_id)}
-                        onMouseLeave={() => setHoveredMsgId(null)}
-                      >
-                        {/* Sender name — only on group start for others, never for me */}
-                        {!isMe && isGroupStart && (
-                          <span style={{
-                            fontSize: '12px', fontWeight: 500,
-                            color: 'var(--text-muted)',
-                            marginBottom: '4px', marginLeft: '38px',
-                          }}>
-                            {msg.sender_name}
-                          </span>
-                        )}
-
-                        <div style={{ display: 'flex', alignItems: 'center', flexDirection: isMe ? 'row-reverse' : 'row', gap: '10px' }}>
-                          {/* The bubble container */}
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start' }}>
-                            {/* Reply Context */}
-                            {isReply && replyContext && (
-                              <div style={{
-                                fontSize: '12px', color: 'var(--text-muted)', 
-                                background: 'rgba(0,0,0,0.2)', padding: '6px 12px',
-                                borderRadius: '12px', marginBottom: '4px',
-                                borderLeft: '2px solid var(--accent)',
-                                maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                opacity: 0.8
-                              }}>
-                                <strong style={{ color: 'var(--text-secondary)' }}>{replyContext.name}</strong>
-                                <br/>
-                                {replyContext.text}
-                              </div>
-                            )}
-                            {/* The bubble */}
-                            <div style={{
-                              padding: '8px 14px',
-                              borderRadius,
-                              background: isMe
-                                ? 'linear-gradient(135deg, var(--accent) 0%, #7289da 100%)'
-                                : 'var(--blynx-750)',
-                              color: 'white',
-                              fontSize: '15px', lineHeight: 1.4,
-                              wordBreak: 'break-word',
-                              border: isMe ? 'none' : '1px solid var(--border)',
-                              boxShadow: isMe ? '0 2px 8px rgba(88,101,242,0.25)' : 'none',
-                              position: 'relative',
-                            }}>
-                              {actualBody}
-                            </div>
-                          </div>
-
-                          {/* Reply Button (Hover) */}
-                          {hoveredMsgId === msg.message_id && (
-                            <button
-                              onClick={() => setReplyTo(msg)}
-                              style={{
-                                background: 'var(--blynx-800)', border: '1px solid var(--border)',
-                                borderRadius: '50%', width: '28px', height: '28px',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                cursor: 'pointer', color: 'var(--text-secondary)',
-                                transition: 'all 0.1s', padding: 0
-                              }}
-                              title="Reply"
-                            >
-                              <Reply size={14} />
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Timestamp — only at group end, small and muted */}
-                        {isGroupEnd && (
-                          <span style={{
-                            fontSize: '11px', color: 'var(--text-muted)', opacity: 0.8,
-                            marginTop: '4px',
-                            marginLeft: isMe ? '0' : '38px',
-                            marginRight: isMe ? '8px' : '0',
-                          }}>
-                            {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        )}
-                      </div>
                     </div>
-                  );
-                })
+                  </Fragment>
+                );
+              })
               )}
               <div ref={endRef} />
             </div>
@@ -419,7 +484,7 @@ export function GroupChat() {
                 <div style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   background: 'var(--blynx-800)', padding: '10px 16px',
-                  borderTopLeftRadius: '24px', borderTopRightRadius: '24px',
+                  borderTopLeftRadius: '8px', borderTopRightRadius: '8px',
                   border: '1px solid rgba(255,255,255,0.06)', borderBottom: 'none',
                   fontSize: '12px', color: 'var(--text-secondary)'
                 }}>
@@ -435,7 +500,7 @@ export function GroupChat() {
               <div style={{ 
                 display: 'flex', gap: '12px', background: 'var(--blynx-800)', 
                 padding: '12px 18px', 
-                borderRadius: replyTo ? '0 0 24px 24px' : '24px', 
+                borderRadius: replyTo ? '0 0 8px 8px' : '8px', 
                 border: '1px solid rgba(255,255,255,0.06)' 
               }}>
                 <input
@@ -486,6 +551,23 @@ export function GroupChat() {
             }
           </div>
         </div>
+      )}
+      {/* Modals */}
+      {showSettingsModal && (
+        <GroupSettingsModal
+          mode={showSettingsModal}
+          initialData={showSettingsModal === 'edit' ? activeGroup : undefined}
+          onClose={() => setShowSettingsModal(false)}
+          onSave={() => {
+            setShowSettingsModal(false);
+            fetchGroups(); // Reload the groups to fetch the new/updated one
+          }}
+          onDelete={() => {
+            setShowSettingsModal(false);
+            fetchGroups();
+            navigate('/groups'); // Kick them out of the deleted group
+          }}
+        />
       )}
     </div>
   );

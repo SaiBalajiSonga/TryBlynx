@@ -13,6 +13,7 @@ import { VideoChat } from './VideoChat';
 import { GroupChat } from './GroupChat';
 import { DMs } from './DMs';
 import { Search } from './Search';
+import { UserProfileModal } from './UserProfileModal';
 import { useWebSocket } from '../lib/useWebSocket';
 
 // FIX: Persist sidebar state across refreshes
@@ -33,6 +34,7 @@ export function Dashboard() {
   // FIX: Persist sidebar open state in localStorage so refresh keeps it
   const [isSidebarOpen, setIsSidebarOpen] = useState(getSavedSidebarState);
   const [activeDropdown, setActiveDropdown] = useState<'notifications' | 'profile' | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
   const toggleSidebar = () => {
     setIsSidebarOpen(prev => {
@@ -248,6 +250,22 @@ export function Dashboard() {
             })}
           </nav>
 
+            {/* User Profile Footer */}
+            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--blynx-900)' }}>
+              <div 
+                onClick={() => user?.id && setSelectedProfileId(user.id)}
+                style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}
+              >
+                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px', fontWeight: 700 }}>
+                  {initials}
+                </div>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>@{user?.username}</div>
+                </div>
+              </div>
+            </div>
+
           <div style={{ padding: '12px', borderTop: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '7px 10px', background: 'var(--blynx-800)', borderRadius: '8px' }}>
               <span className={`status-dot ${wsStatus}`} />
@@ -263,8 +281,8 @@ export function Dashboard() {
             <Route path="/"             element={<Home onNavigate={(p: string) => navigate(`/${p}`)} />} />
             <Route path="/text-chat"    element={<TextChat />} />
             <Route path="/video-chat"   element={<VideoChat />} />
-            <Route path="/groups"       element={<GroupChat />} />
-            <Route path="/groups/:id"   element={<GroupChat />} />
+            <Route path="/groups"       element={<GroupChat onUserClick={setSelectedProfileId} />} />
+            <Route path="/groups/:id"   element={<GroupChat onUserClick={setSelectedProfileId} />} />
             <Route path="/dms"          element={<DMs />} />
             <Route path="/dms/:id"      element={<DMs />} />
             <Route path="/settings"     element={<SettingsView />} />
@@ -273,6 +291,13 @@ export function Dashboard() {
           </Routes>
         </main>
       </div>
+      
+      {selectedProfileId && (
+        <UserProfileModal 
+          userId={selectedProfileId} 
+          onClose={() => setSelectedProfileId(null)} 
+        />
+      )}
     </div>
   );
 }

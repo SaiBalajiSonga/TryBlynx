@@ -4,14 +4,40 @@ import { api } from '../lib/api';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
+import { generateKeyPair, exportPublicKey, exportPrivateKeyToJwk, encryptE2EPayload, decryptE2EPayload } from '../lib/crypto';
 
 export function DMs() {
   const navigate = useNavigate();
   const { id } = useParams(); // URL param for active DM conversation
   const user = useAuthStore(s => s.user);
+  const updateUser = useAuthStore(s => s.updateUser);
 
   const [dms, setDms] = useState<any[]>([]);
   const [loadingDms, setLoadingDms] = useState(true);
+
+  // E2EE Key Initialization
+  useEffect(() => {
+    if (!user) return;
+    const checkKeys = async () => {
+      const storedPriv = localStorage.getItem(`tryblynx_privkey_${user.id}`);
+      if (!user.public_key || !storedPriv) {
+        console.log("Generating new E2EE keys...");
+        try {
+          const kp = await generateKeyPair();
+          const pub = await exportPublicKey(kp.publicKey);
+          const priv = await exportPrivateKeyToJwk(kp.privateKey);
+          localStorage.setItem(`tryblynx_privkey_${user.id}`, JSON.stringify(priv));
+          
+          // Must send all existing fields to PUT /profile
+          await api.updateProfile({ ...user, public_key: pub });
+          updateUser({ public_key: pub });
+        } catch (err) {
+          console.error("Failed to generate keys:", err);
+        }
+      }
+    };
+    checkKeys();
+  }, [user, updateUser]);
 
   const [messages, setMessages] = useState<any[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -36,38 +62,90 @@ export function DMs() {
 
   // Fetch messages when active DM changes
   useEffect(() => {
-    if (!id) return;
+    if (!id || !user) return;
 
-    setLoadingMessages(true);
-    api.getMessages(id)
-      .then(res => setMessages(res.messages || []))
-      .catch(err => console.error("Failed to load messages:", err))
-      .finally(() => setLoadingMessages(false));
-
-  }, [id]);
+    const fetchAndDecrypt = async () => {
+      setLoadingMessages(true);
+      try {
+        const res = await api.getMessages(id);
+        const msgs = res.messages || [];
+        
+        const privStr = localStorage.getItem(`tryblynx_privkey_${user.id}`);
+        const privJwk = privStr ? JSON.parse(privStr) : null;
+        
+        const decryptedMsgs = await Promise.all(msgs.map(async (msg: any) => {
+          if (!msg.body.startsWith('{')) return msg; // not e2ee json payload
+          if (!privJwk) return { ...msg, body: '[Encrypted - Missing Key]' };
+          const isSender = msg.sender_id === user.id;
+          const plain = await decryptE2EPayload(msg.body, privJwk, isSender);
+          return { ...msg, body: plain };
+        }));
+        setMessages(decryptedMsgs);
+      } catch (err) {
+        console.error("Failed to load messages:", err);
+      } finally {
+        setLoadingMessages(false);
+      }
+    };
+    fetchAndDecrypt();
+  }, [id, user]);
 
   // Listen for new websocket messages
   const wsMessagesRaw = useChatStore(s => s.dmMessages[id || '']);
   const wsMessages = wsMessagesRaw || [];
   useEffect(() => {
-    if (!id || wsMessages.length === 0) return;
+    if (!id || wsMessages.length === 0 || !user) return;
     const latest = wsMessages[wsMessages.length - 1];
+    
     if (latest.conversation_id === id) {
-      setMessages(prev => {
-        if (prev.some(m => m.id === latest.message_id || m.id === (latest as any).id)) return prev;
-        return [latest, ...prev];
-      });
+      const decryptLatest = async () => {
+        const privStr = localStorage.getItem(`tryblynx_privkey_${user.id}`);
+        const privJwk = privStr ? JSON.parse(privStr) : null;
+        
+        let plainBody = latest.body;
+        if (latest.body.startsWith('{') && privJwk) {
+          const isSender = latest.sender_id === user.id;
+          plainBody = await decryptE2EPayload(latest.body, privJwk, isSender);
+        } else if (latest.body.startsWith('{')) {
+          plainBody = '[Encrypted - Missing Key]';
+        }
+        
+        setMessages(prev => {
+          if (prev.some(m => m.id === latest.message_id || m.id === (latest as any).id)) return prev;
+          return [{ ...latest, body: plainBody, id: latest.message_id || (latest as any).id }, ...prev];
+        });
+      };
+      decryptLatest();
     }
-  }, [wsMessages, id]);
+  }, [wsMessages, id, user]);
 
   const activeChat = dms.find(c => c.id === id);
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim() || !id) return;
-    api.sendMessage(id, newMessage)
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !id || !activeChat || !user) return;
+    
+    let payloadStr = newMessage;
+    
+    // Encrypt if both parties have public keys
+    if (user.public_key && activeChat.peer_public_key) {
+      try {
+        payloadStr = await encryptE2EPayload(newMessage, user.public_key, activeChat.peer_public_key);
+      } catch (err) {
+        console.error("Encryption failed:", err);
+        return alert("Encryption failed. Message not sent.");
+      }
+    } else if (!activeChat.peer_public_key) {
+      const confirmSend = window.confirm("The recipient does not have E2EE enabled. Send unencrypted?");
+      if (!confirmSend) return;
+    }
+    
+    const plainText = newMessage;
+    setNewMessage('');
+    
+    api.sendMessage(id, payloadStr)
       .then(msg => {
-        setMessages(prev => [msg, ...prev]);
-        setNewMessage('');
+        // optimistically add it plain since we just sent it
+        setMessages(prev => [{ ...msg, body: plainText }, ...prev]);
       })
       .catch(err => console.error("Failed to send:", err));
   };

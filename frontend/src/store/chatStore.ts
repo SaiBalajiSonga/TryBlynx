@@ -6,6 +6,7 @@ export interface ChatMessage {
   sender_name: string;
   room_id: string;
   body: string;
+  is_edited: boolean;
   created_at: string;
 }
 
@@ -33,6 +34,8 @@ interface ChatState {
   setMatchPeerId: (id: string | null) => void;
   addMessage: (roomId: string, message: ChatMessage) => void;
   addDMMessage: (conversationId: string, message: DMMessage) => void;
+  updateMessage: (roomId: string, messageId: string, newBody: string, isEdited: boolean) => void;
+  deleteMessage: (roomId: string, messageId: string) => void;
   clearChat: () => void;
 }
 
@@ -70,6 +73,28 @@ export const useChatStore = create<ChatState>((set) => ({
       dmMessages: {
         ...state.dmMessages,
         [conversationId]: [...existing, message].slice(-500),
+      }
+    };
+  }),
+
+  updateMessage: (roomId, messageId, newBody, isEdited) => set((state) => {
+    const existing = state.messages[roomId];
+    if (!existing) return state;
+    return {
+      messages: {
+        ...state.messages,
+        [roomId]: existing.map(m => m.message_id === messageId ? { ...m, body: newBody, is_edited: isEdited } : m)
+      }
+    };
+  }),
+
+  deleteMessage: (roomId, messageId) => set((state) => {
+    const existing = state.messages[roomId];
+    if (!existing) return state;
+    return {
+      messages: {
+        ...state.messages,
+        [roomId]: existing.filter(m => m.message_id !== messageId)
       }
     };
   }),

@@ -35,6 +35,7 @@ type updateProfileRequest struct {
 	Location    string   `json:"location"`  // ISO 3166 alpha-2 or city
 	Language    string   `json:"language"`  // BCP-47 tag (e.g., "en", "fr")
 	Interests   []string `json:"interests"` // array of interest tags
+	PublicKey   string   `json:"public_key"`
 }
 
 // validGenders is the set of accepted gender values, matching the
@@ -116,7 +117,7 @@ func (s *Server) UpdateProfileHandler(w http.ResponseWriter, r *http.Request) {
 	user, err := s.Store.UpdateUserProfile(
 		r.Context(), userID,
 		req.DisplayName, req.AvatarURL, req.Bio,
-		req.Gender, req.Location, req.Language, req.Interests,
+		req.Gender, req.Location, req.Language, req.Interests, req.PublicKey,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to update profile")

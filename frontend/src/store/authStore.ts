@@ -15,6 +15,7 @@ export interface UserProfile {
   location?: string;
   language?: string;
   interests?: string[];
+  public_key?: string;
 }
 
 interface AuthState {

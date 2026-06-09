@@ -108,6 +108,10 @@ func handleMessage(c *Client, msg *InboundMessage) {
 		handleChatJoin(c, msg.Payload)
 	case "chat.message":
 		handleChatMessage(c, msg.Payload)
+	case "chat.edit":
+		handleChatEdit(c, msg.Payload)
+	case "chat.delete":
+		handleChatDelete(c, msg.Payload)
 	case "chat.leave":
 		handleChatLeave(c, msg.Payload)
 
@@ -141,6 +145,17 @@ type chatJoinPayload struct {
 type chatMessagePayload struct {
 	RoomID string `json:"room_id"` // Conversation UUID
 	Body   string `json:"body"`    // 1-5000 characters
+}
+
+type chatEditPayload struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+	Body      string `json:"body"`
+}
+
+type chatDeletePayload struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
 }
 
 type chatLeavePayload struct {
@@ -281,6 +296,88 @@ func handleChatMessage(c *Client, payload json.RawMessage) {
 
 	// Publish to Redis → Hub receives via listenRedis → fans
 	// out to all local clients in the room (including sender)
+	c.Hub.broadcast <- &RoomBroadcast{RoomID: roomKey, Data: outData}
+}
+
+// handleChatEdit processes "chat.edit" messages.
+func handleChatEdit(c *Client, payload json.RawMessage) {
+	var p chatEditPayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.RoomID == "" || p.MessageID == "" || p.Body == "" {
+		c.sendError("invalid chat.edit payload")
+		return
+	}
+	if len(p.Body) > 5000 {
+		c.sendError("message too long (max 5000 characters)")
+		return
+	}
+
+	roomKey := "chat:room:" + p.RoomID
+	if !c.joinedRooms[roomKey] {
+		c.sendError("you must join the room before editing messages")
+		return
+	}
+
+	msgID, err := uuid.Parse(p.MessageID)
+	if err != nil {
+		c.sendError("invalid message_id")
+		return
+	}
+
+	err = c.Hub.Store.UpdateMessage(context.Background(), msgID, c.UserID, p.Body)
+	if err != nil {
+		log.Printf("ws-handler: failed to edit message for user %s: %v", c.UserID, err)
+		c.sendError("failed to edit message")
+		return
+	}
+
+	outbound := OutboundMessage{
+		Type: "chat.edit",
+		Payload: map[string]interface{}{
+			"message_id": p.MessageID,
+			"room_id":    p.RoomID,
+			"body":       p.Body,
+			"is_edited":  true,
+		},
+	}
+	outData, _ := json.Marshal(outbound)
+	c.Hub.broadcast <- &RoomBroadcast{RoomID: roomKey, Data: outData}
+}
+
+// handleChatDelete processes "chat.delete" messages.
+func handleChatDelete(c *Client, payload json.RawMessage) {
+	var p chatDeletePayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.RoomID == "" || p.MessageID == "" {
+		c.sendError("invalid chat.delete payload")
+		return
+	}
+
+	roomKey := "chat:room:" + p.RoomID
+	if !c.joinedRooms[roomKey] {
+		c.sendError("you must join the room before deleting messages")
+		return
+	}
+
+	msgID, err := uuid.Parse(p.MessageID)
+	if err != nil {
+		c.sendError("invalid message_id")
+		return
+	}
+
+	err = c.Hub.Store.DeleteMessage(context.Background(), msgID, c.UserID)
+	if err != nil {
+		log.Printf("ws-handler: failed to delete message for user %s: %v", c.UserID, err)
+		c.sendError("failed to delete message")
+		return
+	}
+
+	outbound := OutboundMessage{
+		Type: "chat.delete",
+		Payload: map[string]interface{}{
+			"message_id": p.MessageID,
+			"room_id":    p.RoomID,
+		},
+	}
+	outData, _ := json.Marshal(outbound)
 	c.Hub.broadcast <- &RoomBroadcast{RoomID: roomKey, Data: outData}
 }
 

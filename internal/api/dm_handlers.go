@@ -188,7 +188,7 @@ func (s *Server) GetDMMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Fetch messages ───────────────────────────────────────
-	msgs, err := s.Store.GetMessages(r.Context(), convID, cursor, limit)
+	msgs, err := s.Store.GetMessages(r.Context(), userID, convID, cursor, limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to fetch messages")
 		return

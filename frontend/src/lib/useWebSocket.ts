@@ -12,13 +12,19 @@ let globalSendMessage: ((type: string, payload: unknown) => void) | null = null;
 export function useWebSocket() {
   const token = useAuthStore((s) => s.token);
   const clearAuth = useAuthStore((s) => s.clearAuth);
-  const { setWsStatus, setMatchStatus, setActiveRoomId, setMatchPeerId, addMessage, addDMMessage, clearChat } = useChatStore();
+  const { setWsStatus, setMatchStatus, setActiveRoomId, setMatchPeerId, addMessage, addDMMessage, updateMessage, deleteMessage, clearChat } = useChatStore();
   const handleMessageRef = useRef<((data: any) => void) | null>(null);
 
   const handleMessage = useCallback((data: any) => {
     switch (data.type) {
       case 'chat.message':
         addMessage(data.payload.room_id, data.payload);
+        break;
+      case 'chat.edit':
+        updateMessage(data.payload.room_id, data.payload.message_id, data.payload.body, data.payload.is_edited);
+        break;
+      case 'chat.delete':
+        deleteMessage(data.payload.room_id, data.payload.message_id);
         break;
       case 'dm.message':
         addDMMessage(data.payload.conversation_id, data.payload);
@@ -71,7 +77,7 @@ export function useWebSocket() {
       default:
         console.log('Unhandled WS message:', data.type, data);
     }
-  }, [addMessage, addDMMessage, setMatchStatus, setActiveRoomId, setMatchPeerId, clearChat]);
+  }, [addMessage, addDMMessage, updateMessage, deleteMessage, setMatchStatus, setActiveRoomId, setMatchPeerId, clearChat]);
 
   // Always keep the ref pointing to the latest handleMessage
   handleMessageRef.current = handleMessage;

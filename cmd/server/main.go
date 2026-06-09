@@ -40,6 +40,7 @@ import (
 	"tryblynx/internal/db"
 	"tryblynx/internal/matchmaker"
 	redisclient "tryblynx/internal/redisclient"
+	"tryblynx/internal/worker"
 	"tryblynx/internal/ws"
 )
 
@@ -70,6 +71,9 @@ func main() {
 	defer pool.Close()
 	store := db.NewStore(pool, rdb)
 	log.Println("postgres: connected")
+
+	// ── 3.5 Start Background Workers ──────────────────────────
+	worker.StartCleanupWorker(store)
 
 	// ── 4. Create HTTP API Server ────────────────────────────
 	apiServer := api.NewServer(cfg, store)
