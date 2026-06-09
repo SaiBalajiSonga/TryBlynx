@@ -6,9 +6,11 @@ import { useChatStore } from '../store/chatStore';
 import { useAuthStore } from '../store/authStore';
 import { useWebSocket } from '../lib/useWebSocket';
 import { useWebRTCStore } from '../store/webrtcStore';
+import { api } from '../lib/api';
 
 export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
   const [message, setMessage] = useState('');
+  const [peerProfile, setPeerProfile] = useState<{ display_name?: string, username: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -23,6 +25,16 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (matchPeerId) {
+      api.getUserProfile(matchPeerId)
+        .then(data => setPeerProfile(data))
+        .catch(err => console.error("Failed to fetch peer profile", err));
+    } else {
+      setPeerProfile(null);
+    }
+  }, [matchPeerId]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -64,9 +76,28 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
         flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <Hash size={18} color="var(--text-muted)" />
-          <span style={{ fontWeight: 600, fontSize: '15px', color: 'white' }}>Live Match</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          {peerProfile ? (
+            <>
+              <div style={{
+                width: '32px', height: '32px', borderRadius: '50%',
+                background: 'linear-gradient(135deg, var(--accent), #7289da)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '13px', fontWeight: 700, color: 'white',
+              }}>
+                {(peerProfile.display_name || peerProfile.username).charAt(0).toUpperCase()}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontWeight: 600, fontSize: '14px', color: 'white', lineHeight: '1.2' }}>{peerProfile.display_name || peerProfile.username}</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>@{peerProfile.username}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <Hash size={18} color="var(--text-muted)" />
+              <span style={{ fontWeight: 600, fontSize: '15px', color: 'white' }}>Live Match</span>
+            </>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginLeft: '10px' }}>
             <span className="status-dot connected" style={{ width: '6px', height: '6px' }} />
             <span style={{ fontSize: '12px', color: 'var(--teal)' }}>Connected</span>
           </div>
@@ -145,8 +176,29 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
 
         {messages.map((msg, i) => {
           const isMe = msg.sender_id === user?.id;
+          
           const prevMsg = messages[i - 1];
-          const isFirst = !prevMsg || prevMsg.sender_id !== msg.sender_id;
+          const nextMsg = messages[i + 1];
+          const isGroupStart = !prevMsg || prevMsg.sender_id !== msg.sender_id;
+          const isGroupEnd = !nextMsg || nextMsg.sender_id !== msg.sender_id;
+          const isSolo = isGroupStart && isGroupEnd;
+
+          const r = '18px';
+          const s = '4px';
+          let borderRadius: string;
+          if (isMe) {
+            if (isSolo)             borderRadius = `${r} ${r} ${r} ${r}`;
+            else if (isGroupStart)  borderRadius = `${r} ${r} ${s} ${r}`;
+            else if (isGroupEnd)    borderRadius = `${r} ${s} ${r} ${r}`;
+            else                    borderRadius = `${r} ${s} ${s} ${r}`;
+          } else {
+            if (isSolo)             borderRadius = `${r} ${r} ${r} ${r}`;
+            else if (isGroupStart)  borderRadius = `${r} ${r} ${r} ${s}`;
+            else if (isGroupEnd)    borderRadius = `${s} ${r} ${r} ${r}`;
+            else                    borderRadius = `${s} ${r} ${r} ${s}`;
+          }
+
+          const marginTop = isGroupStart ? '12px' : '2px';
 
           return (
             <div
@@ -157,45 +209,50 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
                 flexDirection: isMe ? 'row-reverse' : 'row',
                 alignItems: 'flex-end',
                 gap: '8px',
-                marginTop: isFirst ? '12px' : '2px',
+                marginTop: marginTop,
               }}
             >
-              {/* Avatar — only show for first in group */}
               {!isMe && (
                 <div style={{ width: '32px', flexShrink: 0 }}>
-                  {isFirst && (
+                  {isGroupEnd && (
                     <div style={{
                       width: '32px', height: '32px', borderRadius: '50%',
                       background: 'linear-gradient(135deg, var(--accent), #7289da)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: '13px', fontWeight: 700, color: 'white',
                     }}>
-                      {msg.sender_name.charAt(0).toUpperCase()}
+                      {peerProfile ? (peerProfile.display_name || peerProfile.username).charAt(0).toUpperCase() : msg.sender_name.charAt(0).toUpperCase()}
                     </div>
                   )}
                 </div>
               )}
 
-              <div style={{ maxWidth: '70%' }}>
-                {!isMe && isFirst && (
-                  <p style={{ margin: '0 0 4px 4px', fontSize: '12px', fontWeight: 600, color: 'var(--accent)' }}>
-                    {msg.sender_name}
-                  </p>
-                )}
+              <div style={{ maxWidth: '70%', display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start' }}>
                 <div style={{
-                  padding: '9px 13px',
-                  borderRadius: isMe
-                    ? '16px 16px 4px 16px'
-                    : '16px 16px 16px 4px',
-                  background: isMe ? 'var(--accent)' : 'var(--blynx-700)',
+                  padding: '8px 14px',
+                  borderRadius,
+                  background: isMe
+                    ? 'linear-gradient(135deg, var(--accent) 0%, #7289da 100%)'
+                    : 'var(--blynx-750)',
                   color: 'white',
-                  fontSize: '14px',
-                  lineHeight: '1.45',
+                  fontSize: '15px',
+                  lineHeight: '1.4',
                   wordBreak: 'break-word',
                   border: isMe ? 'none' : '1px solid var(--border)',
+                  boxShadow: isMe ? '0 2px 8px rgba(88,101,242,0.25)' : 'none',
                 }}>
                   {msg.body}
                 </div>
+                {isGroupEnd && (
+                  <span style={{
+                    fontSize: '11px', color: 'var(--text-muted)', opacity: 0.8,
+                    marginTop: '4px',
+                    marginLeft: isMe ? '0' : '6px',
+                    marginRight: isMe ? '6px' : '0',
+                  }}>
+                    {new Date(msg.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
               </div>
             </div>
           );

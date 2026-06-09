@@ -23,6 +23,7 @@ export async function fetchWithAuth(endpoint: string, options: RequestInit = {})
 
 export const api = {
   getProfile: () => fetchWithAuth('/profile'),
+  getUserProfile: (id: string) => fetchWithAuth(`/profile/${id}`),
   updateProfile: (data: Partial<import('../store/authStore').UserProfile>) =>
     fetchWithAuth('/profile', { method: 'PUT', body: JSON.stringify(data) }),
   getFeed: (cursor?: string) =>
