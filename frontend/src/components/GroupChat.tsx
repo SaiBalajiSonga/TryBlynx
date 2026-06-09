@@ -6,6 +6,9 @@ import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
 import { useWebSocket } from '../lib/useWebSocket';
 
+// Stable empty array — never recreated, prevents Zustand getSnapshot infinite loop
+const EMPTY_MESSAGES: import('../store/chatStore').ChatMessage[] = [];
+
 export function GroupChat() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -24,7 +27,9 @@ export function GroupChat() {
 
   // FIX: Read messages directly from chatStore (populated by WS handler)
   // instead of maintaining a separate local state that drifts out of sync
-  const wsMessages = useChatStore(s => s.messages[id || ''] || []);
+  // FIX: Must return stable reference. Inline `|| []` creates new array every
+  // render → Zustand sees changed snapshot → re-renders → infinite loop.
+  const wsMessages = useChatStore(s => s.messages[id ?? ''] ?? EMPTY_MESSAGES);
 
   // Fetch groups list once
   useEffect(() => {

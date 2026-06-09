@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+
+const EMPTY_MESSAGES: import('../store/chatStore').ChatMessage[] = [];
 import { Send, Video, PhoneOff, Hash, MoreHorizontal } from 'lucide-react';
 import { useChatStore } from '../store/chatStore';
 import { useAuthStore } from '../store/authStore';
@@ -12,7 +14,7 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
 
   const user = useAuthStore((s) => s.user);
   const activeRoomId = useChatStore((s) => s.activeRoomId);
-  const messages = useChatStore((s) => activeRoomId ? s.messages[activeRoomId] : undefined) || [];
+  const messages = useChatStore((s) => (activeRoomId ? s.messages[activeRoomId] : undefined) ?? EMPTY_MESSAGES);
   const matchPeerId = useChatStore((s) => s.matchPeerId);
   const clearChat = useChatStore((s) => s.clearChat);
   const startVideo = useWebRTCStore((s) => s.startVideo);

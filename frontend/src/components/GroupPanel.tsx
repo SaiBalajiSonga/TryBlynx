@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
+
+const EMPTY_MESSAGES: import('../store/chatStore').ChatMessage[] = [];
 import { Users, Send, Hash, Zap } from 'lucide-react';
 import { useWebSocket } from '../lib/useWebSocket';
 import { useChatStore } from '../store/chatStore';
@@ -9,7 +11,7 @@ const GROUP_ROOM = 'global-lounge';
 export function GroupPanel() {
   const { sendMessage } = useWebSocket();
   const user = useAuthStore((s) => s.user);
-  const messages = useChatStore((s) => s.messages[GROUP_ROOM] || []);
+  const messages = useChatStore((s) => s.messages[GROUP_ROOM] ?? EMPTY_MESSAGES);
   const wsStatus = useChatStore((s) => s.wsStatus);
   const [text, setText] = useState('');
   const [joined, setJoined] = useState(false);
