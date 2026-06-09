@@ -166,8 +166,8 @@ export function GroupChat() {
               </button>
             </div>
 
-            {/* Messages — FIX: column (not column-reverse) with scroll to bottom */}
-            <div style={{ flex: 1, padding: '12px 16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {/* ── Messages — Instagram DM style ── */}
+            <div style={{ flex: 1, padding: '12px 8px 12px 16px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
               {wsMessages.length === 0 ? (
                 <div style={{ textAlign: 'center', color: 'var(--text-muted)', margin: 'auto' }}>
                   <Hash size={32} style={{ marginBottom: '8px', opacity: 0.3 }} />
@@ -177,41 +177,112 @@ export function GroupChat() {
                 wsMessages.map((msg, i) => {
                   const isMe = msg.sender_id === user?.id;
                   const prev = wsMessages[i - 1];
-                  const isFirst = !prev || prev.sender_id !== msg.sender_id;
+                  const next = wsMessages[i + 1];
+                  // Group boundary detection
+                  const isGroupStart = !prev || prev.sender_id !== msg.sender_id;
+                  const isGroupEnd   = !next || next.sender_id !== msg.sender_id;
+                  const isSolo       = isGroupStart && isGroupEnd;
+                  // Instagram bubble radius rules:
+                  // Solo:       full round (18px all)
+                  // Group start (top):   top corners round, bottom-inner square
+                  // Group middle:        inner side square top & bottom
+                  // Group end (bottom):  top-inner square, bottom corners round
+                  const r = '18px';
+                  const s = '4px'; // squared corner
+                  let borderRadius: string;
+                  if (isMe) {
+                    // My bubbles: right side always round, left side varies
+                    if (isSolo)             borderRadius = `${r} ${r} ${r} ${r}`;
+                    else if (isGroupStart)  borderRadius = `${r} ${r} ${s} ${r}`;
+                    else if (isGroupEnd)    borderRadius = `${r} ${r} ${r} ${s}`;
+                    else                    borderRadius = `${r} ${r} ${s} ${s}`;
+                  } else {
+                    // Their bubbles: left side always round, right side varies
+                    if (isSolo)             borderRadius = `${r} ${r} ${r} ${r}`;
+                    else if (isGroupStart)  borderRadius = `${r} ${r} ${r} ${s}`;
+                    else if (isGroupEnd)    borderRadius = `${r} ${r} ${s} ${r}`;
+                    else                    borderRadius = `${r} ${r} ${s} ${s}`;
+                  }
+                  // Vertical spacing: new group gets more breathing room
+                  const marginTop = isGroupStart ? '12px' : '2px';
                   return (
-                    <div key={msg.message_id} style={{ display: 'flex', gap: '12px', flexDirection: isMe ? 'row-reverse' : 'row' }}>
-                      <div style={{ width: '36px', flexShrink: 0 }}>
-                        {isFirst && (
-                          <div style={{
-                            width: '36px', height: '36px', borderRadius: '50%',
-                            background: isMe ? 'linear-gradient(135deg, var(--accent), #7289da)' : 'var(--blynx-700)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'white', fontWeight: 700, fontSize: '14px',
+                    <div
+                      key={msg.message_id}
+                      style={{
+                        display: 'flex',
+                        flexDirection: isMe ? 'row-reverse' : 'row',
+                        alignItems: 'flex-end', // avatar aligns to bottom of group
+                        gap: '8px',
+                        marginTop,
+                        // Right-align my messages
+                        justifyContent: isMe ? 'flex-end' : 'flex-start',
+                      }}
+                    >
+                      {/* Avatar column — only for others, only shown on last bubble of group */}
+                      {!isMe && (
+                        <div style={{ width: '28px', flexShrink: 0, alignSelf: 'flex-end', marginBottom: '2px' }}>
+                          {isGroupEnd ? (
+                            <div style={{
+                              width: '28px', height: '28px', borderRadius: '50%',
+                              background: 'var(--blynx-600)',
+                              border: '1px solid var(--border-bright)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: 'white', fontWeight: 700, fontSize: '11px',
+                              flexShrink: 0,
+                            }}>
+                              {(msg.sender_name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                          ) : (
+                            // Invisible spacer — keeps bubbles left-aligned even without avatar
+                            <div style={{ width: '28px' }} />
+                          )}
+                        </div>
+                      )}
+
+                      {/* Bubble + optional name header */}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '68%' }}>
+                        {/* Sender name — only on group start for others, never for me */}
+                        {!isMe && isGroupStart && (
+                          <span style={{
+                            fontSize: '11px', fontWeight: 600,
+                            color: 'var(--text-muted)',
+                            marginBottom: '4px', marginLeft: '4px',
                           }}>
-                            {(msg.sender_name || 'U').charAt(0).toUpperCase()}
-                          </div>
+                            {msg.sender_name}
+                          </span>
                         )}
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '72%' }}>
-                        {isFirst && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                            <span style={{ color: isMe ? 'var(--accent)' : 'var(--text-secondary)', fontWeight: 600, fontSize: '12px' }}>
-                              {isMe ? (user?.display_name || user?.username || 'You') : msg.sender_name}
-                            </span>
-                            <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
-                              {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                        )}
+
+                        {/* The bubble */}
                         <div style={{
-                          background: isMe ? 'var(--accent)' : 'var(--blynx-800)',
-                          color: 'white', padding: '9px 13px',
-                          borderRadius: isMe ? '14px 14px 3px 14px' : '14px 14px 14px 3px',
-                          fontSize: '14px', lineHeight: 1.45, wordBreak: 'break-word',
+                          padding: '9px 14px',
+                          borderRadius,
+                          // My messages: accent gradient. Theirs: dark surface.
+                          background: isMe
+                            ? 'linear-gradient(135deg, var(--accent) 0%, #7289da 100%)'
+                            : 'var(--blynx-750)',
+                          color: 'white',
+                          fontSize: '14px', lineHeight: 1.45,
+                          wordBreak: 'break-word',
                           border: isMe ? 'none' : '1px solid var(--border)',
+                          // Subtle shadow on mine to lift them off background
+                          boxShadow: isMe ? '0 2px 8px rgba(88,101,242,0.25)' : 'none',
+                          // Timestamp on hover
+                          position: 'relative',
                         }}>
                           {msg.body}
                         </div>
+
+                        {/* Timestamp — only at group end, small and muted */}
+                        {isGroupEnd && (
+                          <span style={{
+                            fontSize: '10px', color: 'var(--text-muted)',
+                            marginTop: '3px',
+                            marginLeft: isMe ? '0' : '4px',
+                            marginRight: isMe ? '4px' : '0',
+                          }}>
+                            {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
                       </div>
                     </div>
                   );

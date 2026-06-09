@@ -191,16 +191,29 @@ export function Dashboard() {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
 
         {/* Sidebar */}
+        {/* Backdrop — click to close */}
+        {isSidebarOpen && (
+          <div
+            onClick={toggleSidebar}
+            style={{
+              position: 'absolute', inset: 0, zIndex: 45,
+              background: 'rgba(0,0,0,0.45)',
+              backdropFilter: 'blur(2px)',
+              animation: 'fade-in 0.2s ease',
+            }}
+          />
+        )}
+
         <aside style={{
-          width: '220px', flexShrink: 0,
+          position: 'absolute', top: 0, left: 0, bottom: 0, zIndex: 50,
+          width: '220px',
           background: 'var(--blynx-850)',
           borderRight: '1px solid var(--border)',
           display: 'flex', flexDirection: 'column',
           transform: isSidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
-          // FIX: Use margin trick instead of absolute so content doesn't overlap
-          marginLeft: isSidebarOpen ? '0' : '-220px',
-          transition: 'margin-left 0.25s cubic-bezier(0.4,0,0.2,1), transform 0.25s cubic-bezier(0.4,0,0.2,1)',
+          transition: 'transform 0.25s cubic-bezier(0.4,0,0.2,1)',
           overflowY: 'auto', overflowX: 'hidden',
+          boxShadow: isSidebarOpen ? '4px 0 32px rgba(0,0,0,0.5)' : 'none',
         }}>
           <nav style={{ padding: '12px 8px', flex: 1 }}>
             <p style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', padding: '4px 8px 6px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
