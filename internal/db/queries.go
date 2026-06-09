@@ -60,6 +60,10 @@ const userColumns = `
 	COALESCE(bio, '')         AS bio,
 	gender, location, language, interests,
 	is_vip, is_admin, is_moderator, is_developer, shadowbanned,
+	COALESCE(public_key, '') AS public_key,
+	COALESCE(device_fingerprint, '') AS device_fingerprint,
+	COALESCE(strike_count, 0) AS strike_count,
+	banned_until,
 	created_at, updated_at`
 
 // scanUser scans a single row matching the userColumns layout
@@ -71,6 +75,8 @@ func scanUser(row pgx.Row) (*models.User, error) {
 		&u.DisplayName, &u.AvatarURL, &u.Bio,
 		&u.Gender, &u.Location, &u.Language, &u.Interests,
 		&u.IsVIP, &u.IsAdmin, &u.IsModerator, &u.IsDeveloper, &u.Shadowbanned,
+		&u.PublicKey,
+		&u.DeviceFingerprint, &u.StrikeCount, &u.BannedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -160,6 +166,7 @@ func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*models.User, er
 //   - location:    ISO 3166 country code or city name.
 //   - language:    BCP-47 language tag (e.g., "en", "fr").
 //   - interests:   Slice of interest tags (may be empty).
+//   - publicKey:   Base64 encoded public key (may be empty).
 //
 // Returns:
 //   - *models.User: The updated user with all fields.
@@ -167,15 +174,16 @@ func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*models.User, er
 func (s *Store) UpdateUserProfile(
 	ctx context.Context, id uuid.UUID,
 	displayName, avatarURL, bio, gender, location, language string,
-	interests []string,
+	interests []string, publicKey string,
 ) (*models.User, error) {
 	row := s.Pool.QueryRow(ctx, `
 		UPDATE users SET
 			display_name = $2, avatar_url = $3, bio = $4,
-			gender = $5, location = $6, language = $7, interests = $8
+			gender = $5, location = $6, language = $7, interests = $8,
+			public_key = $9
 		WHERE id = $1
 		RETURNING `+userColumns,
-		id, displayName, avatarURL, bio, gender, location, language, interests,
+		id, displayName, avatarURL, bio, gender, location, language, interests, publicKey,
 	)
 	return scanUser(row)
 }
@@ -223,6 +231,82 @@ func (s *Store) SetUserVIPByEmail(ctx context.Context, email string, isVIP bool)
 		return fmt.Errorf("db: user with email %s not found", email)
 	}
 	return nil
+}
+
+// UpdateUserFingerprint records the user's device fingerprint.
+func (s *Store) UpdateUserFingerprint(ctx context.Context, id uuid.UUID, fingerprint string) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE users SET device_fingerprint = $2 WHERE id = $1`, id, fingerprint)
+	return err
+}
+
+// LogUserStrike increments a user's strike count and issues an escalating ban.
+func (s *Store) LogUserStrike(ctx context.Context, id uuid.UUID) (*time.Time, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var strikes int
+	var fp string
+	err = tx.QueryRow(ctx, `SELECT strike_count, device_fingerprint FROM users WHERE id = $1 FOR UPDATE`, id).Scan(&strikes, &fp)
+	if err != nil {
+		return nil, err
+	}
+
+	strikes++
+	
+	// Escalation: 15m -> 24h -> 7d
+	var banDuration time.Duration
+	switch strikes {
+	case 1:
+		banDuration = 15 * time.Minute
+	case 2:
+		banDuration = 24 * time.Hour
+	default:
+		banDuration = 7 * 24 * time.Hour
+	}
+	
+	bannedUntil := time.Now().Add(banDuration)
+
+	_, err = tx.Exec(ctx, `UPDATE users SET strike_count = $2, banned_until = $3 WHERE id = $1`, id, strikes, bannedUntil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ban the device as well
+	if fp != "" {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO device_bans (fingerprint, banned_until, reason) 
+			VALUES ($1, $2, 'AI Moderation Strike Escalation')
+			ON CONFLICT (fingerprint) DO UPDATE SET banned_until = GREATEST(device_bans.banned_until, EXCLUDED.banned_until)
+		`, fp, bannedUntil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	return &bannedUntil, nil
+}
+
+// CheckDeviceBan checks if a given fingerprint is currently banned.
+func (s *Store) CheckDeviceBan(ctx context.Context, fingerprint string) (bool, error) {
+	if fingerprint == "" {
+		return false, nil
+	}
+	var bannedUntil time.Time
+	err := s.Pool.QueryRow(ctx, `SELECT banned_until FROM device_bans WHERE fingerprint = $1`, fingerprint).Scan(&bannedUntil)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return time.Now().Before(bannedUntil), nil
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -374,20 +458,25 @@ func (s *Store) CreateMessage(ctx context.Context, conversationID, senderID uuid
 // Returns:
 //   - []models.Message: Messages ordered newest-first.
 //   - error:            Non-nil on query failure.
-func (s *Store) GetMessages(ctx context.Context, conversationID uuid.UUID, cursor time.Time, limit int) ([]models.Message, error) {
+func (s *Store) GetMessages(ctx context.Context, requestingUserID uuid.UUID, conversationID uuid.UUID, cursor time.Time, limit int) ([]models.Message, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 
 	rows, err := s.Pool.Query(ctx, `
-		SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at,
+		SELECT m.id, m.conversation_id, m.sender_id, m.body, m.is_edited, m.created_at,
 		       COALESCE(u.display_name, u.username, 'User') AS sender_name
 		FROM messages m
 		LEFT JOIN users u ON m.sender_id = u.id
 		WHERE m.conversation_id = $1 AND m.created_at < $2
+		  AND m.sender_id NOT IN (
+		      SELECT blocked_id FROM user_blocks WHERE blocker_id = $4
+		      UNION
+		      SELECT blocker_id FROM user_blocks WHERE blocked_id = $4
+		  )
 		ORDER BY m.created_at DESC
 		LIMIT $3`,
-		conversationID, cursor, limit,
+		conversationID, cursor, limit, requestingUserID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("db: failed to query messages: %w", err)
@@ -398,7 +487,7 @@ func (s *Store) GetMessages(ctx context.Context, conversationID uuid.UUID, curso
 	for rows.Next() {
 		var m models.Message
 		var senderName *string
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &m.CreatedAt, &senderName); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &m.IsEdited, &m.CreatedAt, &senderName); err != nil {
 			return nil, fmt.Errorf("db: failed to scan message: %w", err)
 		}
 		if senderName != nil {
@@ -411,6 +500,72 @@ func (s *Store) GetMessages(ctx context.Context, conversationID uuid.UUID, curso
 		msgs = []models.Message{}
 	}
 	return msgs, rows.Err()
+}
+
+// UpdateMessage updates a message's body and sets is_edited to true.
+func (s *Store) UpdateMessage(ctx context.Context, id uuid.UUID, senderID uuid.UUID, newBody string) error {
+	cmd, err := s.Pool.Exec(ctx, `
+		UPDATE messages
+		SET body = $1, is_edited = true
+		WHERE id = $2 AND sender_id = $3
+	`, newBody, id, senderID)
+	if err != nil {
+		return fmt.Errorf("db: failed to update message: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("db: message not found or unauthorized")
+	}
+	return nil
+}
+
+// ── User Blocking and Reporting ─────────────────────────────────
+
+// BlockUser adds a block relationship.
+func (s *Store) BlockUser(ctx context.Context, blockerID, blockedID uuid.UUID) error {
+	if blockerID == blockedID {
+		return fmt.Errorf("db: cannot block self")
+	}
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO user_blocks (blocker_id, blocked_id) 
+		VALUES ($1, $2) ON CONFLICT DO NOTHING
+	`, blockerID, blockedID)
+	return err
+}
+
+// UnblockUser removes a block relationship.
+func (s *Store) UnblockUser(ctx context.Context, blockerID, blockedID uuid.UUID) error {
+	_, err := s.Pool.Exec(ctx, `
+		DELETE FROM user_blocks 
+		WHERE blocker_id = $1 AND blocked_id = $2
+	`, blockerID, blockedID)
+	return err
+}
+
+// ReportUser files a new report.
+func (s *Store) ReportUser(ctx context.Context, reporterID, reportedID uuid.UUID, messageID *uuid.UUID, reason string) error {
+	if reporterID == reportedID {
+		return fmt.Errorf("db: cannot report self")
+	}
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO user_reports (reporter_id, reported_id, message_id, reason)
+		VALUES ($1, $2, $3, $4)
+	`, reporterID, reportedID, messageID, reason)
+	return err
+}
+
+// DeleteMessage deletes a message from the database.
+func (s *Store) DeleteMessage(ctx context.Context, id uuid.UUID, senderID uuid.UUID) error {
+	cmd, err := s.Pool.Exec(ctx, `
+		DELETE FROM messages
+		WHERE id = $1 AND sender_id = $2
+	`, id, senderID)
+	if err != nil {
+		return fmt.Errorf("db: failed to delete message: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("db: message not found or unauthorized")
+	}
+	return nil
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -550,7 +705,11 @@ func (s *Store) GetUserConversations(ctx context.Context, userID uuid.UUID) ([]m
 // GetAllGroups retrieves all group chats available on the server.
 func (s *Store) GetAllGroups(ctx context.Context) ([]models.Conversation, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT c.id, c.type, COALESCE(c.name, '') AS name, c.created_at
+		SELECT c.id, c.type, COALESCE(c.name, '') AS name, 
+		       COALESCE(c.description, '') AS description, 
+		       COALESCE(c.is_nsfw, false) AS is_nsfw, 
+		       COALESCE(c.slowmode_seconds, 0) AS slowmode_seconds, 
+		       c.created_at
 		FROM conversations c
 		WHERE c.type = 'group'
 		ORDER BY c.created_at ASC
@@ -563,7 +722,7 @@ func (s *Store) GetAllGroups(ctx context.Context) ([]models.Conversation, error)
 	var groups []models.Conversation
 	for rows.Next() {
 		var c models.Conversation
-		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &c.Description, &c.IsNSFW, &c.SlowmodeSeconds, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("db: failed to scan group: %w", err)
 		}
 		
@@ -585,6 +744,7 @@ type DMConversation struct {
 	PeerID       uuid.UUID `json:"peer_id"`
 	PeerName     string    `json:"peer_name"`
 	PeerAvatar   string    `json:"peer_avatar"`
+	PeerPublicKey string   `json:"peer_public_key"`
 }
 
 // GetUserDMs retrieves a user's DM conversations, including the peer's profile info.
@@ -596,7 +756,8 @@ func (s *Store) GetUserDMs(ctx context.Context, userID uuid.UUID) ([]DMConversat
 			(SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
 			u.id AS peer_id,
 			COALESCE(NULLIF(u.display_name, ''), u.username) AS peer_name,
-			COALESCE(u.avatar_url, '') AS peer_avatar
+			COALESCE(u.avatar_url, '') AS peer_avatar,
+			COALESCE(u.public_key, '') AS peer_public_key
 		FROM conversations c
 		JOIN conversation_members cm1 ON cm1.conversation_id = c.id AND cm1.user_id = $1
 		JOIN conversation_members cm2 ON cm2.conversation_id = c.id AND cm2.user_id != $1
@@ -618,7 +779,7 @@ func (s *Store) GetUserDMs(ctx context.Context, userID uuid.UUID) ([]DMConversat
 		if err := rows.Scan(
 			&dm.ID, &dm.Type, &dm.CreatedAt,
 			&dm.LastMessage, &dm.LastMessageAt,
-			&dm.PeerID, &dm.PeerName, &dm.PeerAvatar,
+			&dm.PeerID, &dm.PeerName, &dm.PeerAvatar, &dm.PeerPublicKey,
 		); err != nil {
 			return nil, fmt.Errorf("db: failed to scan user DM: %w", err)
 		}
@@ -738,4 +899,44 @@ func (s *Store) SearchUsers(ctx context.Context, query string) ([]models.User, e
 		users = []models.User{}
 	}
 	return users, rows.Err()
+}
+
+// CreateGroup creates a new group conversation.
+func (s *Store) CreateGroup(ctx context.Context, name, description string, isNSFW bool, slowmode int) (models.Conversation, error) {
+	var c models.Conversation
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO conversations (type, name, description, is_nsfw, slowmode_seconds)
+		VALUES ('group', $1, $2, $3, $4)
+		RETURNING id, type, COALESCE(name, '') AS name, COALESCE(description, '') AS description, COALESCE(is_nsfw, false) AS is_nsfw, COALESCE(slowmode_seconds, 0) AS slowmode_seconds, created_at
+	`, name, description, isNSFW, slowmode).Scan(&c.ID, &c.Type, &c.Name, &c.Description, &c.IsNSFW, &c.SlowmodeSeconds, &c.CreatedAt)
+	if err != nil {
+		return models.Conversation{}, fmt.Errorf("db: failed to create group: %w", err)
+	}
+	return c, nil
+}
+
+// UpdateGroup updates the settings of an existing group conversation.
+func (s *Store) UpdateGroup(ctx context.Context, id uuid.UUID, name, description string, isNSFW bool, slowmode int) (models.Conversation, error) {
+	var c models.Conversation
+	err := s.Pool.QueryRow(ctx, `
+		UPDATE conversations
+		SET name = $1, description = $2, is_nsfw = $3, slowmode_seconds = $4
+		WHERE id = $5 AND type = 'group'
+		RETURNING id, type, COALESCE(name, '') AS name, COALESCE(description, '') AS description, COALESCE(is_nsfw, false) AS is_nsfw, COALESCE(slowmode_seconds, 0) AS slowmode_seconds, created_at
+	`, name, description, isNSFW, slowmode, id).Scan(&c.ID, &c.Type, &c.Name, &c.Description, &c.IsNSFW, &c.SlowmodeSeconds, &c.CreatedAt)
+	if err != nil {
+		return models.Conversation{}, fmt.Errorf("db: failed to update group: %w", err)
+	}
+	return c, nil
+}
+
+// DeleteGroup deletes a group conversation and all associated messages.
+func (s *Store) DeleteGroup(ctx context.Context, id uuid.UUID) error {
+	_, err := s.Pool.Exec(ctx, `
+		DELETE FROM conversations WHERE id = $1 AND type = 'group'
+	`, id)
+	if err != nil {
+		return fmt.Errorf("db: failed to delete group: %w", err)
+	}
+	return nil
 }

@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -28,15 +29,17 @@ import (
 
 // registerRequest is the expected JSON body for POST /api/register.
 type registerRequest struct {
-	Username string `json:"username"` // 3-32 characters, unique
-	Email    string `json:"email"`    // valid email, unique
-	Password string `json:"password"` // minimum 8 characters
+	Username    string `json:"username"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 // loginRequest is the expected JSON body for POST /api/login.
 type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 // authResponse is the standard response for successful auth operations.
@@ -89,6 +92,19 @@ func (s *Server) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── Check Device Ban ─────────────────────────────────────
+	if req.Fingerprint != "" {
+		isBanned, err := s.Store.CheckDeviceBan(r.Context(), req.Fingerprint)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to verify device status")
+			return
+		}
+		if isBanned {
+			respondError(w, http.StatusForbidden, "This device is temporarily suspended from registering new accounts.")
+			return
+		}
+	}
+
 	// ── Hash password ────────────────────────────────────────
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -117,6 +133,11 @@ func (s *Server) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		respondError(w, http.StatusInternalServerError, "failed to create user")
 		return
+	}
+
+	// ── Store Fingerprint ────────────────────────────────────
+	if req.Fingerprint != "" {
+		_ = s.Store.UpdateUserFingerprint(r.Context(), user.ID, req.Fingerprint)
 	}
 
 	// ── Generate JWT ─────────────────────────────────────────
@@ -159,6 +180,19 @@ func (s *Server) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── Check Device Ban ─────────────────────────────────────
+	if req.Fingerprint != "" {
+		isBanned, err := s.Store.CheckDeviceBan(r.Context(), req.Fingerprint)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to verify device status")
+			return
+		}
+		if isBanned {
+			respondError(w, http.StatusForbidden, "This device is temporarily suspended.")
+			return
+		}
+	}
+
 	// ── Look up user ─────────────────────────────────────────
 	user, err := s.Store.GetUserByEmail(r.Context(), req.Email)
 	if err != nil {
@@ -175,6 +209,17 @@ func (s *Server) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		respondError(w, http.StatusUnauthorized, "invalid email or password")
 		return
+	}
+
+	// ── Check if banned ──────────────────────────────────────
+	if user.BannedUntil != nil && user.BannedUntil.After(time.Now()) {
+		respondError(w, http.StatusForbidden, "Account is temporarily suspended until " + user.BannedUntil.Format(time.RFC1123))
+		return
+	}
+
+	// ── Store Fingerprint ────────────────────────────────────
+	if req.Fingerprint != "" && user.DeviceFingerprint != req.Fingerprint {
+		_ = s.Store.UpdateUserFingerprint(r.Context(), user.ID, req.Fingerprint)
 	}
 
 	// ── Generate JWT ─────────────────────────────────────────

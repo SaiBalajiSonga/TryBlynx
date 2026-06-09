@@ -108,6 +108,13 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 		// Users
 		r.Get("/api/users/search", s.SearchUsersHandler)
 
+		// Moderation (Blocking/Reporting/Strikes)
+		r.Post("/api/moderation/block", s.BlockUserHandler)
+		r.Post("/api/moderation/unblock", s.UnblockUserHandler)
+		r.Post("/api/moderation/report", s.ReportUserHandler)
+		r.Post("/api/moderation/fingerprint", s.FingerprintHandler)
+		r.Post("/api/moderation/strike", s.StrikeHandler)
+
 		// Global Feed
 		r.Get("/api/feed", s.GetFeedHandler)
 		r.Post("/api/feed", s.CreateFeedPostHandler)
@@ -123,6 +130,11 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 
 		// Stripe Checkout (creates payment session)
 		r.Post("/api/checkout", s.CreateCheckoutHandler)
+
+		// Admin Group Management
+		r.Post("/api/admin/groups", s.AdminCreateGroupHandler)
+		r.Put("/api/admin/groups/{id}", s.AdminUpdateGroupHandler)
+		r.Delete("/api/admin/groups/{id}", s.AdminDeleteGroupHandler)
 	})
 
 	return s

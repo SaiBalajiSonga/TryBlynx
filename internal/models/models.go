@@ -44,7 +44,11 @@ type User struct {
 	IsAdmin      bool      `json:"is_admin"`
 	IsModerator  bool      `json:"is_moderator"`
 	IsDeveloper  bool      `json:"is_developer"`
+	PublicKey    string    `json:"public_key"`
 	Shadowbanned bool      `json:"-"`
+	DeviceFingerprint string `json:"device_fingerprint"`
+	StrikeCount  int       `json:"strike_count"`
+	BannedUntil  *time.Time `json:"banned_until"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -57,11 +61,14 @@ type User struct {
 // distinguishes between "dm", "group", and "random" (matchmaker)
 // conversations. Maps to 002_create_messages.sql.
 type Conversation struct {
-	ID          uuid.UUID `json:"id"`
-	Type        string    `json:"type"`
-	Name        string    `json:"name,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	MemberCount int       `json:"member_count,omitempty"`
+	ID              uuid.UUID `json:"id"`
+	Type            string    `json:"type"`
+	Name            string    `json:"name,omitempty"`
+	Description     string    `json:"description,omitempty"`
+	IsNSFW          bool      `json:"is_nsfw"`
+	SlowmodeSeconds int       `json:"slowmode_seconds"`
+	CreatedAt       time.Time `json:"created_at"`
+	MemberCount     int       `json:"member_count,omitempty"`
 }
 
 // ConversationSummary extends Conversation with the most recent
@@ -81,6 +88,7 @@ type Message struct {
 	SenderID       *uuid.UUID `json:"sender_id,omitempty"`
 	SenderName     string     `json:"sender_name,omitempty"`
 	Body           string     `json:"body"`
+	IsEdited       bool       `json:"is_edited"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
