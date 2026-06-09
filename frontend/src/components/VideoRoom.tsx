@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useWebRTC } from '../lib/useWebRTC';
 import { useWebRTCStore } from '../store/webrtcStore';
 import { Mic, MicOff, Video, VideoOff, PhoneOff, AlertCircle, Wifi } from 'lucide-react';
+import { startVideoModeration, reportAIStrike } from '../lib/videoModeration';
 
 export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator: boolean }) {
   const { endVideo } = useWebRTCStore();
@@ -17,6 +18,18 @@ export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator
       return () => clearTimeout(timer);
     }
   }, [isInitiator, initiateCall]);
+
+  useEffect(() => {
+    if (localVideoRef.current && !isVideoOff) {
+      // Start AI moderation on the local video stream
+      const cleanup = startVideoModeration(localVideoRef.current, (predictions) => {
+        console.warn('Inappropriate behavior detected!', predictions);
+        reportAIStrike();
+        endVideo();
+      });
+      return cleanup;
+    }
+  }, [localVideoRef.current, isVideoOff, endVideo]);
 
   const stateColor = {
     connected: 'var(--teal)',
