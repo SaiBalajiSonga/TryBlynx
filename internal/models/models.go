@@ -46,7 +46,7 @@ type User struct {
 	IsDeveloper  bool      `json:"is_developer"`
 	PublicKey    string    `json:"public_key"`
 	Shadowbanned bool      `json:"-"`
-	DeviceFingerprint string `json:"device_fingerprint"`
+	DeviceFingerprint string `json:"-"`
 	StrikeCount  int       `json:"strike_count"`
 	BannedUntil  *time.Time `json:"banned_until"`
 	CreatedAt    time.Time `json:"created_at"`

@@ -801,6 +801,10 @@ func (s *Store) GetConversationMembers(ctx context.Context, conversationID uuid.
 			COALESCE(u.bio, '') AS bio,
 			u.gender, u.location, u.language, u.interests,
 			u.is_vip, u.is_admin, u.is_moderator, u.is_developer, u.shadowbanned,
+			COALESCE(u.public_key, '') AS public_key,
+			COALESCE(u.device_fingerprint, '') AS device_fingerprint,
+			COALESCE(u.strike_count, 0) AS strike_count,
+			u.banned_until,
 			u.created_at, u.updated_at
 		FROM users u
 		JOIN conversation_members cm ON cm.user_id = u.id
@@ -833,13 +837,7 @@ func (s *Store) GetUsersByIDs(ctx context.Context, userIDs []uuid.UUID) ([]model
 	}
 
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id, username, email, password_hash,
-			COALESCE(display_name, '') AS display_name,
-			COALESCE(avatar_url, '') AS avatar_url,
-			COALESCE(bio, '') AS bio,
-			gender, location, language, interests,
-			is_vip, is_admin, is_moderator, is_developer, shadowbanned,
-			created_at, updated_at
+		SELECT `+userColumns+`
 		FROM users
 		WHERE id = ANY($1)
 		ORDER BY is_admin DESC, is_moderator DESC, is_vip DESC, username ASC
@@ -851,21 +849,12 @@ func (s *Store) GetUsersByIDs(ctx context.Context, userIDs []uuid.UUID) ([]model
 
 	var users []models.User
 	for rows.Next() {
-		var u models.User
-		if err := rows.Scan(
-			&u.ID, &u.Username, &u.Email, &u.PasswordHash,
-			&u.DisplayName, &u.AvatarURL, &u.Bio,
-			&u.Gender, &u.Location, &u.Language, &u.Interests,
-			&u.IsVIP, &u.IsAdmin, &u.IsModerator, &u.IsDeveloper, &u.Shadowbanned,
-			&u.CreatedAt, &u.UpdatedAt,
-		); err != nil {
+		u, err := scanUser(rows)
+		if err != nil {
 			return nil, fmt.Errorf("db: failed to scan user: %w", err)
 		}
-		if u.Interests == nil {
-			u.Interests = []string{}
-		}
 		u.PasswordHash = "" // Clear sensitive data
-		users = append(users, u)
+		users = append(users, *u)
 	}
 	if users == nil {
 		users = []models.User{}

@@ -402,6 +402,21 @@ func handleChatLeave(c *Client, payload json.RawMessage) {
 		return // Not in room — nothing to do (idempotent)
 	}
 
+	// Broadcast peer_left BEFORE removing from the room so all
+	// current members (including other instances via Redis) learn
+	// that this user has left. Without this, peers would not know
+	// to update their presence UI until the next poll.
+	peerLeft := OutboundMessage{
+		Type: "chat.peer_left",
+		Payload: map[string]string{
+			"peer_id": c.UserID.String(),
+			"room_id": p.RoomID,
+		},
+	}
+	if peerLeftData, err := json.Marshal(peerLeft); err == nil {
+		c.Hub.broadcast <- &RoomBroadcast{RoomID: roomKey, Data: peerLeftData}
+	}
+
 	// Request Hub to remove this client from the room
 	done := make(chan struct{})
 	c.Hub.leaveRoom <- &RoomRequest{Client: c, RoomID: roomKey, Done: done}
