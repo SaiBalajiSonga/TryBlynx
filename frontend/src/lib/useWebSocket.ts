@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
 import { useWebRTCStore } from '../store/webrtcStore';
+import { useNotificationStore } from '../store/notificationStore';
 
 // Singleton WebSocket — one per app session, not per component mount
 let globalWs: WebSocket | null = null;
@@ -12,7 +13,11 @@ let globalSendMessage: ((type: string, payload: unknown) => void) | null = null;
 export function useWebSocket() {
   const token = useAuthStore((s) => s.token);
   const clearAuth = useAuthStore((s) => s.clearAuth);
-  const { setWsStatus, setMatchStatus, setActiveRoomId, setMatchPeerId, addMessage, addDMMessage, updateMessage, deleteMessage, clearChat } = useChatStore();
+  const {
+    setWsStatus, setMatchStatus, setActiveRoomId, setMatchPeerId,
+    addMessage, addDMMessage, updateMessage, deleteMessage,
+  } = useChatStore();
+  const addNotification = useNotificationStore((s) => s.addNotification);
   const handleMessageRef = useRef<((data: any) => void) | null>(null);
 
   const handleMessage = useCallback((data: any) => {
@@ -36,9 +41,8 @@ export function useWebSocket() {
         setMatchStatus('idle');
         break;
       case 'match.found':
-        // FIX: Set peer ID before joining so it's available when ChatRoom mounts
+        // Set peer ID before joining so it's available when ChatRoom mounts
         setMatchPeerId(data.payload.peer_id);
-        // Send chat.join directly on globalWs to avoid stale closure
         if (globalWs && globalWs.readyState === WebSocket.OPEN) {
           globalWs.send(JSON.stringify({
             type: 'chat.join',
@@ -47,15 +51,21 @@ export function useWebSocket() {
         }
         break;
       case 'chat.joined':
-        // FIX: Set activeRoomId first, then switch status in next tick
+        // Set activeRoomId first, then switch status in next tick
         // so ChatRoom never renders with null activeRoomId
         setActiveRoomId(data.payload.room_id);
         setTimeout(() => setMatchStatus('matched', undefined), 0);
         break;
       case 'chat.peer_left':
-        // Peer disconnected or left the room
-        clearChat();
+        // Peer left — return to idle. clearMatchChat avoids wiping DM history.
+        useChatStore.getState().clearMatchChat();
         break;
+      case 'notification.push': {
+        // Real-time notification pushed by the server
+        const n = data.payload;
+        if (n) addNotification(n);
+        break;
+      }
       case 'error':
         console.error('WS server error:', data.payload?.message);
         break;
@@ -77,7 +87,8 @@ export function useWebSocket() {
       default:
         console.log('Unhandled WS message:', data.type, data);
     }
-  }, [addMessage, addDMMessage, updateMessage, deleteMessage, setMatchStatus, setActiveRoomId, setMatchPeerId, clearChat]);
+  }, [addMessage, addDMMessage, updateMessage, deleteMessage,
+      setMatchStatus, setActiveRoomId, setMatchPeerId, addNotification]);
 
   // Always keep the ref pointing to the latest handleMessage
   handleMessageRef.current = handleMessage;
@@ -101,7 +112,6 @@ export function useWebSocket() {
 
     ws.onmessage = (event) => {
       try {
-        // Use ref so we always call the latest version without re-creating ws
         handleMessageRef.current?.(JSON.parse(event.data));
       } catch (err) {
         console.error('Failed to parse WS message', err);
@@ -119,7 +129,7 @@ export function useWebSocket() {
         return;
       }
 
-      // Exponential backoff
+      // Exponential backoff reconnect
       const delay = Math.min(3000 + Math.random() * 2000, 15000);
       reconnectTimer = setTimeout(() => connect(), delay);
     };
@@ -130,8 +140,6 @@ export function useWebSocket() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, clearAuth, setWsStatus]);
-  // NOTE: handleMessage intentionally excluded from deps — we use the ref pattern instead
-  // to avoid recreating the WebSocket connection on every render
 
   useEffect(() => {
     connect();

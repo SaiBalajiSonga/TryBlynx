@@ -170,6 +170,40 @@ export function AuthForm() {
                 </>
               )}
             </button>
+
+            <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>OR</span>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+            </div>
+
+            <button
+              type="button"
+              disabled={loading}
+              onClick={async () => {
+                setError('');
+                setLoading(true);
+                try {
+                  const res = await fetch(`${API_URL}/guest`, { method: 'POST' });
+                  const data = await res.json();
+                  if (!res.ok) throw new Error(data.error || 'Guest login failed');
+                  setAuth(data.token, data.user);
+                } catch (err: any) {
+                  setError(err.message);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              style={{
+                width: '100%', marginTop: '16px', padding: '12px', background: 'var(--blynx-750)',
+                border: '1px solid var(--border)', borderRadius: '12px', color: 'white',
+                fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s'
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--blynx-700)'; e.currentTarget.style.borderColor = 'var(--border-bright)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'var(--blynx-750)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+            >
+              Continue as Guest
+            </button>
           </form>
 
           <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px', marginTop: '20px' }}>

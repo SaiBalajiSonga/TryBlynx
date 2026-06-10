@@ -26,20 +26,15 @@ import (
 	"tryblynx/internal/auth"
 	"tryblynx/internal/config"
 	"tryblynx/internal/db"
+	"tryblynx/internal/ws"
 )
 
 // Server holds all dependencies required by HTTP handlers.
-// It is created once at startup and shared across all handler
-// methods via method receivers.
-//
-// Fields:
-//   - Config: Application configuration (JWT secret, Stripe keys, etc.)
-//   - Store:  Database access layer (internal/db.Store).
-//   - Router: The configured chi.Router ready for http.ListenAndServe.
 type Server struct {
 	Config *config.Config
 	Store  *db.Store
 	Router chi.Router
+	Hub    *ws.Hub // WebSocket hub for pushing real-time events from HTTP handlers
 }
 
 // NewServer initializes the HTTP router with all routes,
@@ -90,6 +85,7 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 	// ── Public routes (no authentication) ─────────────────────
 	s.Router.Post("/api/register", s.RegisterHandler)
 	s.Router.Post("/api/login", s.LoginHandler)
+	s.Router.Post("/api/guest", s.GuestLoginHandler)
 	s.Router.Post("/api/webhook/stripe", s.StripeWebhookHandler)
 
 	s.Router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -124,9 +120,29 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 		r.Get("/api/groups/{id}/members", s.GetGroupMembersHandler)
 
 		// Direct Messages
+		r.Get("/api/dm/start", s.StartDMHandler)
 		r.Get("/api/dm/list", s.ListDMsHandler)
 		r.Post("/api/dm/send", s.SendDMHandler)
 		r.Get("/api/dm/{conversationId}", s.GetDMMessagesHandler)
+
+		// Friends
+		r.Get("/api/friends", s.ListFriendsHandler)
+		r.Get("/api/friends/requests", s.ListFriendRequestsHandler)
+		r.Get("/api/friends/status/{userId}", s.GetFriendStatusHandler)
+		r.Post("/api/friends/request", s.SendFriendRequestHandler)
+		r.Post("/api/friends/accept", s.AcceptFriendRequestHandler)
+		r.Post("/api/friends/decline", s.DeclineFriendRequestHandler)
+		r.Delete("/api/friends/{userId}", s.RemoveFriendHandler)
+
+		// Notifications
+		r.Get("/api/notifications", s.GetNotificationsHandler)
+		r.Post("/api/notifications/read", s.MarkNotificationsReadHandler)
+
+		// Moderation Queue (mod/admin/developer only)
+		r.Get("/api/mod/queue", s.GetModQueueHandler)
+		r.Get("/api/mod/log", s.GetModLogHandler)
+		r.Post("/api/mod/reviews/{id}/approve", s.ApproveProfileReviewHandler)
+		r.Post("/api/mod/reviews/{id}/reject", s.RejectProfileReviewHandler)
 
 		// Stripe Checkout (creates payment session)
 		r.Post("/api/checkout", s.CreateCheckoutHandler)

@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-const EMPTY_MESSAGES: import('../store/chatStore').ChatMessage[] = [];
 import { Send, Video, PhoneOff, Hash, MoreHorizontal } from 'lucide-react';
 import { useChatStore } from '../store/chatStore';
 import { useAuthStore } from '../store/authStore';
 import { useWebSocket } from '../lib/useWebSocket';
 import { useWebRTCStore } from '../store/webrtcStore';
 import { api } from '../lib/api';
+
+const EMPTY_MESSAGES: import('../store/chatStore').ChatMessage[] = [];
 
 export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
   const [message, setMessage] = useState('');

@@ -29,28 +29,48 @@ import (
 //   - Shadowbanned is tagged json:"-" to maintain transparency
 //     (shadowbanned users must not know their status).
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	Username     string    `json:"username"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	DisplayName  string    `json:"display_name"`
-	AvatarURL    string    `json:"avatar_url"`
-	Bio          string    `json:"bio"`
-	Gender       string    `json:"gender"`
-	Location     string    `json:"location"`
-	Language     string    `json:"language"`
-	Interests    []string  `json:"interests"`
-	IsVIP        bool      `json:"is_vip"`
-	IsAdmin      bool      `json:"is_admin"`
-	IsModerator  bool      `json:"is_moderator"`
-	IsDeveloper  bool      `json:"is_developer"`
-	PublicKey    string    `json:"public_key"`
-	Shadowbanned bool      `json:"-"`
-	DeviceFingerprint string `json:"-"`
-	StrikeCount  int       `json:"strike_count"`
-	BannedUntil  *time.Time `json:"banned_until"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                uuid.UUID  `json:"id"`
+	Username          string     `json:"username"`
+	Email             string     `json:"email"`
+	PasswordHash      string     `json:"-"`
+	DisplayName       string     `json:"display_name"`
+	AvatarURL         string     `json:"avatar_url"`
+	Bio               string     `json:"bio"`
+	Gender            string     `json:"gender"`
+	Location          string     `json:"location"`
+	Language          string     `json:"language"`
+	Interests         []string   `json:"interests"`
+	IsVIP             bool       `json:"is_vip"`
+	IsAdmin           bool       `json:"is_admin"`
+	IsModerator       bool       `json:"is_moderator"`
+	IsDeveloper       bool       `json:"is_developer"`
+	PublicKey         string     `json:"public_key"`
+	Shadowbanned      bool       `json:"-"`
+	DeviceFingerprint string     `json:"-"`
+	StrikeCount       int        `json:"strike_count"`
+	BannedUntil       *time.Time `json:"banned_until"`
+	IsAnonymous       bool       `json:"is_anonymous"`
+	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+// PublicUser is a safe view of a User, exposing only public-safe fields.
+// Used in search results and profile views — anonymous users see this
+// shape of other users (no email, device info, or internal flags).
+type PublicUser struct {
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   string    `json:"avatar_url"`
+	Bio         string    `json:"bio"`
+	Gender      string    `json:"gender"`
+	Location    string    `json:"location"`
+	Language    string    `json:"language"`
+	Interests   []string  `json:"interests"`
+	IsVIP       bool      `json:"is_vip"`
+	IsAnonymous bool      `json:"is_anonymous"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -105,4 +125,84 @@ type FeedPost struct {
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
 	Author    *User     `json:"author,omitempty"`
+}
+
+// ──────────────────────────────────────────────────────────────
+// Friend System
+// ──────────────────────────────────────────────────────────────
+
+// Friendship represents a relationship between two users.
+// Status state machine: pending → accepted | blocked.
+// Maps to friendships table in 011_friends_and_notifications.sql.
+type Friendship struct {
+	ID          uuid.UUID `json:"id"`
+	RequesterID uuid.UUID `json:"requester_id"`
+	AddresseeID uuid.UUID `json:"addressee_id"`
+	Status      string    `json:"status"` // "pending" | "accepted" | "blocked"
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// FriendWithProfile extends Friendship with the peer's public profile info.
+// Returned by GET /api/friends for the full friends list with avatars.
+type FriendWithProfile struct {
+	Friendship
+	PeerID       uuid.UUID `json:"peer_id"`
+	PeerUsername string    `json:"peer_username"`
+	PeerName     string    `json:"peer_name"`
+	PeerAvatar   string    `json:"peer_avatar"`
+}
+
+// FriendRequest represents a pending incoming friend request with actor info.
+// Returned by GET /api/friends/requests.
+type FriendRequest struct {
+	Friendship
+	RequesterUsername string `json:"requester_username"`
+	RequesterName     string `json:"requester_name"`
+	RequesterAvatar   string `json:"requester_avatar"`
+}
+
+// ──────────────────────────────────────────────────────────────
+// Notifications
+// ──────────────────────────────────────────────────────────────
+
+// Notification represents an in-app notification delivered to a user.
+// Maps to the notifications table in 011_friends_and_notifications.sql.
+//
+// Types:
+//   - friend_request   → actor sent you a friend request
+//   - friend_accepted  → actor accepted your friend request
+//   - profile_approved → moderator approved your profile update
+//   - mod_action       → a moderation action was taken on your account
+type Notification struct {
+	ID          uuid.UUID              `json:"id"`
+	UserID      uuid.UUID              `json:"user_id"`
+	Type        string                 `json:"type"`
+	ActorID     *uuid.UUID             `json:"actor_id,omitempty"`
+	ActorName   string                 `json:"actor_name,omitempty"`
+	ActorAvatar string                 `json:"actor_avatar,omitempty"`
+	Data        map[string]interface{} `json:"data"`
+	IsRead      bool                   `json:"is_read"`
+	CreatedAt   time.Time              `json:"created_at"`
+}
+
+// ──────────────────────────────────────────────────────────────
+// Moderation
+// ──────────────────────────────────────────────────────────────
+
+// ProfileReview represents a profile update submitted for moderator review.
+// Maps to the profile_reviews table in 011_friends_and_notifications.sql.
+type ProfileReview struct {
+	ID              uuid.UUID              `json:"id"`
+	UserID          uuid.UUID              `json:"user_id"`
+	ReviewerID      *uuid.UUID             `json:"reviewer_id,omitempty"`
+	OldData         map[string]interface{} `json:"old_data"`
+	NewData         map[string]interface{} `json:"new_data"`
+	Status          string                 `json:"status"` // "pending" | "approved" | "rejected"
+	RejectionReason *string                `json:"rejection_reason,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	ReviewedAt      *time.Time             `json:"reviewed_at,omitempty"`
+	// Joined fields populated by query
+	UserUsername string `json:"user_username,omitempty"`
+	UserAvatar   string `json:"user_avatar,omitempty"`
 }

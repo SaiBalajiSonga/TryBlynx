@@ -478,6 +478,28 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 
 	ctx := context.Background()
 
+	// Block anonymous users from sending DMs via WS
+	sender, err := c.Hub.Store.GetUserByID(ctx, c.UserID)
+	if err != nil || sender == nil {
+		c.sendError("failed to load user profile")
+		return
+	}
+	if sender.IsAnonymous {
+		c.sendError("guest accounts cannot send direct messages")
+		return
+	}
+
+	// Friendship gate — only friends can DM
+	isFriend, err := c.Hub.Store.IsFriend(ctx, c.UserID, recipientID)
+	if err != nil {
+		c.sendError("failed to verify friendship")
+		return
+	}
+	if !isFriend {
+		c.sendError("you must be friends to send direct messages")
+		return
+	}
+
 	// Get or create DM conversation atomically
 	convID, err := c.Hub.Store.GetOrCreateDM(ctx, c.UserID, recipientID)
 	if err != nil {

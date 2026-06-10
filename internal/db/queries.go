@@ -64,6 +64,8 @@ const userColumns = `
 	COALESCE(device_fingerprint, '') AS device_fingerprint,
 	COALESCE(strike_count, 0) AS strike_count,
 	banned_until,
+	COALESCE(is_anonymous, false) AS is_anonymous,
+	expires_at,
 	created_at, updated_at`
 
 // scanUser scans a single row matching the userColumns layout
@@ -77,6 +79,7 @@ func scanUser(row pgx.Row) (*models.User, error) {
 		&u.IsVIP, &u.IsAdmin, &u.IsModerator, &u.IsDeveloper, &u.Shadowbanned,
 		&u.PublicKey,
 		&u.DeviceFingerprint, &u.StrikeCount, &u.BannedUntil,
+		&u.IsAnonymous, &u.ExpiresAt,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -928,4 +931,445 @@ func (s *Store) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("db: failed to delete group: %w", err)
 	}
 	return nil
+}
+
+// ══════════════════════════════════════════════════════════════
+// FRIEND SYSTEM
+// ══════════════════════════════════════════════════════════════
+
+// SendFriendRequest creates a pending friendship from requester → addressee.
+func (s *Store) SendFriendRequest(ctx context.Context, requesterID, addresseeID uuid.UUID) (*models.Friendship, error) {
+	var f models.Friendship
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO friendships (requester_id, addressee_id, status)
+		VALUES ($1, $2, 'pending')
+		RETURNING id, requester_id, addressee_id, status, created_at, updated_at`,
+		requesterID, addresseeID,
+	).Scan(&f.ID, &f.RequesterID, &f.AddresseeID, &f.Status, &f.CreatedAt, &f.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("db: send friend request: %w", err)
+	}
+	return &f, nil
+}
+
+// AcceptFriendRequest transitions a pending friendship to accepted.
+// Only the addressee should call this.
+func (s *Store) AcceptFriendRequest(ctx context.Context, requesterID, addresseeID uuid.UUID) (*models.Friendship, error) {
+	var f models.Friendship
+	err := s.Pool.QueryRow(ctx, `
+		UPDATE friendships
+		SET status = 'accepted', updated_at = NOW()
+		WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'
+		RETURNING id, requester_id, addressee_id, status, created_at, updated_at`,
+		requesterID, addresseeID,
+	).Scan(&f.ID, &f.RequesterID, &f.AddresseeID, &f.Status, &f.CreatedAt, &f.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("db: accept friend request: %w", err)
+	}
+	return &f, nil
+}
+
+// DeclineFriendRequest deletes a pending friendship (addressee declines).
+func (s *Store) DeclineFriendRequest(ctx context.Context, requesterID, addresseeID uuid.UUID) error {
+	tag, err := s.Pool.Exec(ctx, `
+		DELETE FROM friendships
+		WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'`,
+		requesterID, addresseeID,
+	)
+	if err != nil {
+		return fmt.Errorf("db: decline friend request: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("db: friend request not found")
+	}
+	return nil
+}
+
+// RemoveFriend deletes an accepted friendship in either direction.
+func (s *Store) RemoveFriend(ctx context.Context, userA, userB uuid.UUID) error {
+	_, err := s.Pool.Exec(ctx, `
+		DELETE FROM friendships
+		WHERE status = 'accepted'
+		  AND ((requester_id = $1 AND addressee_id = $2)
+		    OR (requester_id = $2 AND addressee_id = $1))`,
+		userA, userB,
+	)
+	if err != nil {
+		return fmt.Errorf("db: remove friend: %w", err)
+	}
+	return nil
+}
+
+// BlockFriend creates or upgrades a relationship to blocked status.
+func (s *Store) BlockFriend(ctx context.Context, blockerID, blockedID uuid.UUID) error {
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO friendships (requester_id, addressee_id, status)
+		VALUES ($1, $2, 'blocked')
+		ON CONFLICT (requester_id, addressee_id)
+		DO UPDATE SET status = 'blocked', updated_at = NOW()`,
+		blockerID, blockedID,
+	)
+	if err != nil {
+		return fmt.Errorf("db: block friend: %w", err)
+	}
+	return nil
+}
+
+// GetFriends returns all accepted friends with peer profile info.
+func (s *Store) GetFriends(ctx context.Context, userID uuid.UUID) ([]models.FriendWithProfile, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT
+			f.id, f.requester_id, f.addressee_id, f.status, f.created_at, f.updated_at,
+			u.id AS peer_id,
+			u.username AS peer_username,
+			COALESCE(NULLIF(u.display_name,''), u.username) AS peer_name,
+			COALESCE(u.avatar_url, '') AS peer_avatar
+		FROM friendships f
+		JOIN users u ON u.id = CASE
+			WHEN f.requester_id = $1 THEN f.addressee_id
+			ELSE f.requester_id
+		END
+		WHERE (f.requester_id = $1 OR f.addressee_id = $1)
+		  AND f.status = 'accepted'
+		ORDER BY f.updated_at DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db: get friends: %w", err)
+	}
+	defer rows.Close()
+
+	var friends []models.FriendWithProfile
+	for rows.Next() {
+		var fw models.FriendWithProfile
+		if err := rows.Scan(
+			&fw.ID, &fw.RequesterID, &fw.AddresseeID, &fw.Status, &fw.CreatedAt, &fw.UpdatedAt,
+			&fw.PeerID, &fw.PeerUsername, &fw.PeerName, &fw.PeerAvatar,
+		); err != nil {
+			return nil, fmt.Errorf("db: scan friend: %w", err)
+		}
+		friends = append(friends, fw)
+	}
+	if friends == nil {
+		friends = []models.FriendWithProfile{}
+	}
+	return friends, rows.Err()
+}
+
+// GetFriendRequests returns all incoming pending requests for a user.
+func (s *Store) GetFriendRequests(ctx context.Context, userID uuid.UUID) ([]models.FriendRequest, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT
+			f.id, f.requester_id, f.addressee_id, f.status, f.created_at, f.updated_at,
+			u.username AS requester_username,
+			COALESCE(NULLIF(u.display_name,''), u.username) AS requester_name,
+			COALESCE(u.avatar_url, '') AS requester_avatar
+		FROM friendships f
+		JOIN users u ON u.id = f.requester_id
+		WHERE f.addressee_id = $1 AND f.status = 'pending'
+		ORDER BY f.created_at DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db: get friend requests: %w", err)
+	}
+	defer rows.Close()
+
+	var requests []models.FriendRequest
+	for rows.Next() {
+		var fr models.FriendRequest
+		if err := rows.Scan(
+			&fr.ID, &fr.RequesterID, &fr.AddresseeID, &fr.Status, &fr.CreatedAt, &fr.UpdatedAt,
+			&fr.RequesterUsername, &fr.RequesterName, &fr.RequesterAvatar,
+		); err != nil {
+			return nil, fmt.Errorf("db: scan friend request: %w", err)
+		}
+		requests = append(requests, fr)
+	}
+	if requests == nil {
+		requests = []models.FriendRequest{}
+	}
+	return requests, rows.Err()
+}
+
+// GetFriendshipStatus returns "none","pending_outgoing","pending_incoming","accepted","blocked".
+func (s *Store) GetFriendshipStatus(ctx context.Context, viewerID, targetID uuid.UUID) (string, error) {
+	var requesterID, addresseeID uuid.UUID
+	var status string
+	err := s.Pool.QueryRow(ctx, `
+		SELECT requester_id, addressee_id, status FROM friendships
+		WHERE (requester_id = $1 AND addressee_id = $2)
+		   OR (requester_id = $2 AND addressee_id = $1)
+		LIMIT 1`,
+		viewerID, targetID,
+	).Scan(&requesterID, &addresseeID, &status)
+	if err == pgx.ErrNoRows {
+		return "none", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("db: friendship status: %w", err)
+	}
+	if status == "accepted" {
+		return "accepted", nil
+	}
+	if status == "blocked" {
+		return "blocked", nil
+	}
+	if requesterID == viewerID {
+		return "pending_outgoing", nil
+	}
+	return "pending_incoming", nil
+}
+
+// IsFriend checks whether two users have an accepted friendship.
+func (s *Store) IsFriend(ctx context.Context, userA, userB uuid.UUID) (bool, error) {
+	var exists bool
+	err := s.Pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM friendships
+			WHERE status = 'accepted'
+			  AND ((requester_id = $1 AND addressee_id = $2)
+			    OR (requester_id = $2 AND addressee_id = $1))
+		)`, userA, userB,
+	).Scan(&exists)
+	return exists, err
+}
+
+// ══════════════════════════════════════════════════════════════
+// NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════
+
+// CreateNotificationRaw inserts a notification using a raw JSONB data string.
+func (s *Store) CreateNotificationRaw(ctx context.Context, userID uuid.UUID, notifType string, actorID *uuid.UUID, dataJSON string) (*models.Notification, error) {
+	var n models.Notification
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO notifications (user_id, type, actor_id, data)
+		VALUES ($1, $2, $3, $4::jsonb)
+		RETURNING id, user_id, type, actor_id, data, is_read, created_at`,
+		userID, notifType, actorID, dataJSON,
+	).Scan(&n.ID, &n.UserID, &n.Type, &n.ActorID, &n.Data, &n.IsRead, &n.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("db: create notification: %w", err)
+	}
+	if n.Data == nil {
+		n.Data = map[string]interface{}{}
+	}
+	return &n, nil
+}
+
+// GetNotifications returns recent notifications for a user with actor info.
+func (s *Store) GetNotifications(ctx context.Context, userID uuid.UUID, limit int) ([]models.Notification, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT
+			n.id, n.user_id, n.type, n.actor_id, n.data, n.is_read, n.created_at,
+			COALESCE(NULLIF(u.display_name,''), u.username, '') AS actor_name,
+			COALESCE(u.avatar_url, '') AS actor_avatar
+		FROM notifications n
+		LEFT JOIN users u ON u.id = n.actor_id
+		WHERE n.user_id = $1
+		ORDER BY n.created_at DESC
+		LIMIT $2`,
+		userID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db: get notifications: %w", err)
+	}
+	defer rows.Close()
+
+	var notifs []models.Notification
+	for rows.Next() {
+		var n models.Notification
+		if err := rows.Scan(
+			&n.ID, &n.UserID, &n.Type, &n.ActorID, &n.Data, &n.IsRead, &n.CreatedAt,
+			&n.ActorName, &n.ActorAvatar,
+		); err != nil {
+			return nil, fmt.Errorf("db: scan notification: %w", err)
+		}
+		if n.Data == nil {
+			n.Data = map[string]interface{}{}
+		}
+		notifs = append(notifs, n)
+	}
+	if notifs == nil {
+		notifs = []models.Notification{}
+	}
+	return notifs, rows.Err()
+}
+
+// GetUnreadNotificationCount returns count of unread notifications.
+func (s *Store) GetUnreadNotificationCount(ctx context.Context, userID uuid.UUID) (int, error) {
+	var count int
+	err := s.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = FALSE`,
+		userID,
+	).Scan(&count)
+	return count, err
+}
+
+// MarkNotificationsRead marks all of a user's notifications as read.
+func (s *Store) MarkNotificationsRead(ctx context.Context, userID uuid.UUID) error {
+	_, err := s.Pool.Exec(ctx,
+		`UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND is_read = FALSE`,
+		userID,
+	)
+	return err
+}
+
+// ══════════════════════════════════════════════════════════════
+// ANONYMOUS / GUEST USERS
+// ══════════════════════════════════════════════════════════════
+
+// CreateGuestUser creates an ephemeral anonymous user expiring in 24 hours.
+func (s *Store) CreateGuestUser(ctx context.Context, username string) (*models.User, error) {
+	expiresAt := time.Now().Add(24 * time.Hour)
+	fakeEmail := username + "@guest.tryblynx.internal"
+	row := s.Pool.QueryRow(ctx, `
+		INSERT INTO users (username, email, password_hash, is_anonymous, expires_at)
+		VALUES ($1, $2, '', TRUE, $3)
+		RETURNING `+userColumns,
+		username, fakeEmail, expiresAt,
+	)
+	return scanUser(row)
+}
+
+// PurgeExpiredGuests deletes anonymous users past their expiry. Returns count deleted.
+func (s *Store) PurgeExpiredGuests(ctx context.Context) (int64, error) {
+	tag, err := s.Pool.Exec(ctx,
+		`DELETE FROM users WHERE is_anonymous = TRUE AND expires_at < NOW()`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("db: purge guests: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ══════════════════════════════════════════════════════════════
+// PROFILE REVIEWS (Moderation Queue)
+// ══════════════════════════════════════════════════════════════
+
+// CreateProfileReview queues a profile update for moderator review.
+func (s *Store) CreateProfileReview(ctx context.Context, userID uuid.UUID, oldDataJSON, newDataJSON string) (*models.ProfileReview, error) {
+	var pr models.ProfileReview
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO profile_reviews (user_id, old_data, new_data)
+		VALUES ($1, $2::jsonb, $3::jsonb)
+		RETURNING id, user_id, reviewer_id, old_data, new_data, status, rejection_reason, created_at, reviewed_at`,
+		userID, oldDataJSON, newDataJSON,
+	).Scan(&pr.ID, &pr.UserID, &pr.ReviewerID, &pr.OldData, &pr.NewData,
+		&pr.Status, &pr.RejectionReason, &pr.CreatedAt, &pr.ReviewedAt)
+	if err != nil {
+		return nil, fmt.Errorf("db: create profile review: %w", err)
+	}
+	return &pr, nil
+}
+
+// GetPendingProfileReviews returns all pending reviews for the mod queue.
+func (s *Store) GetPendingProfileReviews(ctx context.Context) ([]models.ProfileReview, error) {
+	return s.queryProfileReviews(ctx, `WHERE pr.status = 'pending' ORDER BY pr.created_at ASC`)
+}
+
+// GetAllProfileReviews returns full review history for mod log.
+func (s *Store) GetAllProfileReviews(ctx context.Context, limit int) ([]models.ProfileReview, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	return s.queryProfileReviews(ctx, fmt.Sprintf(`ORDER BY pr.created_at DESC LIMIT %d`, limit))
+}
+
+func (s *Store) queryProfileReviews(ctx context.Context, whereClause string) ([]models.ProfileReview, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT pr.id, pr.user_id, pr.reviewer_id, pr.old_data, pr.new_data,
+			pr.status, pr.rejection_reason, pr.created_at, pr.reviewed_at,
+			u.username, COALESCE(u.avatar_url,'') AS user_avatar
+		FROM profile_reviews pr
+		JOIN users u ON u.id = pr.user_id `+whereClause,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db: query profile reviews: %w", err)
+	}
+	defer rows.Close()
+
+	var reviews []models.ProfileReview
+	for rows.Next() {
+		var pr models.ProfileReview
+		if err := rows.Scan(
+			&pr.ID, &pr.UserID, &pr.ReviewerID, &pr.OldData, &pr.NewData,
+			&pr.Status, &pr.RejectionReason, &pr.CreatedAt, &pr.ReviewedAt,
+			&pr.UserUsername, &pr.UserAvatar,
+		); err != nil {
+			return nil, fmt.Errorf("db: scan profile review: %w", err)
+		}
+		reviews = append(reviews, pr)
+	}
+	if reviews == nil {
+		reviews = []models.ProfileReview{}
+	}
+	return reviews, rows.Err()
+}
+
+// ApproveProfileReview approves a review, applies changes to the user, returns review.
+func (s *Store) ApproveProfileReview(ctx context.Context, reviewID, reviewerID uuid.UUID) (*models.ProfileReview, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var pr models.ProfileReview
+	err = tx.QueryRow(ctx, `
+		UPDATE profile_reviews
+		SET status = 'approved', reviewer_id = $2, reviewed_at = NOW()
+		WHERE id = $1 AND status = 'pending'
+		RETURNING id, user_id, reviewer_id, old_data, new_data, status, rejection_reason, created_at, reviewed_at`,
+		reviewID, reviewerID,
+	).Scan(&pr.ID, &pr.UserID, &pr.ReviewerID, &pr.OldData, &pr.NewData,
+		&pr.Status, &pr.RejectionReason, &pr.CreatedAt, &pr.ReviewedAt)
+	if err != nil {
+		return nil, fmt.Errorf("db: approve review: %w", err)
+	}
+
+	// Apply new_data to the user
+	if pr.NewData != nil {
+		displayName, _ := pr.NewData["display_name"].(string)
+		avatarURL, _ := pr.NewData["avatar_url"].(string)
+		bio, _ := pr.NewData["bio"].(string)
+		if displayName != "" || avatarURL != "" || bio != "" {
+			_, err = tx.Exec(ctx, `
+				UPDATE users SET
+					display_name = CASE WHEN $2 != '' THEN $2 ELSE display_name END,
+					avatar_url   = CASE WHEN $3 != '' THEN $3 ELSE avatar_url END,
+					bio          = CASE WHEN $4 != '' THEN $4 ELSE bio END
+				WHERE id = $1`,
+				pr.UserID, displayName, avatarURL, bio,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("db: apply profile update: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &pr, nil
+}
+
+// RejectProfileReview rejects a pending profile review with a reason.
+func (s *Store) RejectProfileReview(ctx context.Context, reviewID, reviewerID uuid.UUID, reason string) (*models.ProfileReview, error) {
+	var pr models.ProfileReview
+	err := s.Pool.QueryRow(ctx, `
+		UPDATE profile_reviews
+		SET status = 'rejected', reviewer_id = $2, reviewed_at = NOW(), rejection_reason = $3
+		WHERE id = $1 AND status = 'pending'
+		RETURNING id, user_id, reviewer_id, old_data, new_data, status, rejection_reason, created_at, reviewed_at`,
+		reviewID, reviewerID, reason,
+	).Scan(&pr.ID, &pr.UserID, &pr.ReviewerID, &pr.OldData, &pr.NewData,
+		&pr.Status, &pr.RejectionReason, &pr.CreatedAt, &pr.ReviewedAt)
+	if err != nil {
+		return nil, fmt.Errorf("db: reject review: %w", err)
+	}
+	return &pr, nil
 }

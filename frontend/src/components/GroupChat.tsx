@@ -127,7 +127,7 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
         // Only seed if store is empty for this room (avoid duplicating on re-visit)
         const current = useChatStore.getState().messages[id] || [];
         if (current.length === 0) {
-          msgs.forEach(m => {
+          [...msgs].reverse().forEach(m => {
             // Normalise REST shape → ChatMessage shape
             useChatStore.getState().addMessage(id, {
               message_id: m.id || m.message_id,

@@ -27,6 +27,7 @@ interface ChatState {
   matchPeerId: string | null;
   messages: Record<string, ChatMessage[]>;
   dmMessages: Record<string, DMMessage[]>;
+  dmUnreadCounts: Record<string, number>;
 
   setWsStatus: (status: 'disconnected' | 'connecting' | 'connected') => void;
   setMatchStatus: (status: 'idle' | 'waiting' | 'matched' | 'cancelled', targetGender?: string) => void;
@@ -36,6 +37,10 @@ interface ChatState {
   addDMMessage: (conversationId: string, message: DMMessage) => void;
   updateMessage: (roomId: string, messageId: string, newBody: string, isEdited: boolean) => void;
   deleteMessage: (roomId: string, messageId: string) => void;
+  clearDMUnread: (conversationId: string) => void;
+  /** Clears only the matchmaking chat state; preserves DM history */
+  clearMatchChat: () => void;
+  /** Full reset including DMs — use sparingly (e.g. on logout) */
   clearChat: () => void;
 }
 
@@ -47,6 +52,7 @@ export const useChatStore = create<ChatState>((set) => ({
   matchPeerId: null,
   messages: {},
   dmMessages: {},
+  dmUnreadCounts: {},
 
   setWsStatus: (status) => set({ wsStatus: status }),
   setMatchStatus: (status, targetGender) => set({ matchStatus: status, targetGender: targetGender ?? null }),
@@ -67,13 +73,21 @@ export const useChatStore = create<ChatState>((set) => ({
   }),
 
   addDMMessage: (conversationId, message) => set((state) => {
-    const existing = state.dmMessages[conversationId] || [];
-    if (existing.some(m => m.message_id === message.message_id)) return state;
+    const existing = state.dmMessages[conversationId] ?? [];
+    // Deduplicate using message_id (backend field) OR id (optimistic local field)
+    const isDup = existing.some(
+      m => m.message_id === message.message_id || (message as any).id === m.message_id
+    );
+    if (isDup) return state;
     return {
       dmMessages: {
         ...state.dmMessages,
         [conversationId]: [...existing, message].slice(-500),
-      }
+      },
+      dmUnreadCounts: {
+        ...state.dmUnreadCounts,
+        [conversationId]: (state.dmUnreadCounts[conversationId] ?? 0) + 1,
+      },
     };
   }),
 
@@ -99,6 +113,19 @@ export const useChatStore = create<ChatState>((set) => ({
     };
   }),
 
+  clearDMUnread: (conversationId) => set((state) => ({
+    dmUnreadCounts: { ...state.dmUnreadCounts, [conversationId]: 0 },
+  })),
+
+  clearMatchChat: () => set({
+    matchStatus: 'idle',
+    targetGender: null,
+    activeRoomId: null,
+    matchPeerId: null,
+    messages: {},
+    // dmMessages and dmUnreadCounts intentionally preserved
+  }),
+
   clearChat: () => set({
     matchStatus: 'idle',
     targetGender: null,
@@ -106,6 +133,7 @@ export const useChatStore = create<ChatState>((set) => ({
     matchPeerId: null,
     messages: {},
     dmMessages: {},
+    dmUnreadCounts: {},
     // wsStatus intentionally NOT reset — connection stays alive
   }),
 }));

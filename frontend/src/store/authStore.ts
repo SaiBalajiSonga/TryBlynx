@@ -8,6 +8,8 @@ export interface UserProfile {
   is_admin: boolean;
   is_moderator: boolean;
   is_developer: boolean;
+  is_anonymous?: boolean;
+  expires_at?: string | null;
   display_name?: string;
   avatar_url?: string;
   bio?: string;
