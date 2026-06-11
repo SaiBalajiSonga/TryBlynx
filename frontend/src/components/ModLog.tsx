@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
 import {
-  Clipboard, CheckCircle, XCircle, Clock, RefreshCw,
+  Clipboard, CheckCircle, XCircle, RefreshCw,
   ChevronDown, ChevronUp, Shield, AlertTriangle,
 } from 'lucide-react';
 
@@ -291,4 +291,3 @@ export function ModLog() {
 }
 
 // Fix: prevent unused import warning
-function _unused() { return <Clock size={1} />; }
