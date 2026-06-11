@@ -3,6 +3,9 @@ import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
 import { useWebRTCStore } from '../store/webrtcStore';
 import { useNotificationStore } from '../store/notificationStore';
+import { useUIStore } from '../store/uiStore';
+import { useNavigate } from 'react-router-dom';
+import { isEncrypted, loadPrivateKey, decryptMessage } from './crypto';
 
 // Singleton WebSocket — one per app session, not per component mount
 let globalWs: WebSocket | null = null;
@@ -11,6 +14,7 @@ let isConnecting = false;
 let globalSendMessage: ((type: string, payload: unknown) => void) | null = null;
 
 export function useWebSocket() {
+  const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const {
@@ -23,6 +27,7 @@ export function useWebSocket() {
   const handleMessage = useCallback((data: any) => {
     switch (data.type) {
       case 'chat.message':
+      case 'match.message':
         addMessage(data.payload.room_id, data.payload);
         break;
       case 'chat.edit':
@@ -31,9 +36,48 @@ export function useWebSocket() {
       case 'chat.delete':
         deleteMessage(data.payload.room_id, data.payload.message_id);
         break;
-      case 'dm.message':
+      case 'dm.message': {
         addDMMessage(data.payload.conversation_id, data.payload);
+        const myId = useAuthStore.getState().user?.id;
+        if (data.payload.sender_id !== myId) {
+          const isLookingAtChat = window.location.pathname.includes(`/app/dms/${data.payload.conversation_id}`);
+          if (document.visibilityState === 'hidden' || !isLookingAtChat) {
+            (async () => {
+              let bodyText = data.payload.body;
+              if (isEncrypted(bodyText)) {
+                const privJwk = loadPrivateKey(myId);
+                if (privJwk) {
+                  try {
+                    // decryptMessage takes (ciphertext, privJwk, isSender)
+                    bodyText = await decryptMessage(bodyText, privJwk, false);
+                  } catch (e) {
+                    bodyText = '🔒 Encrypted message';
+                  }
+                } else {
+                  bodyText = '🔒 Encrypted message';
+                }
+              }
+
+              // Show native notification
+              if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification(`New message from ${data.payload.sender_name}`, {
+                  body: bodyText
+                });
+              }
+              // Show in-app toast
+              useUIStore.getState().showToast(
+                'info',
+                `${data.payload.sender_name}:\n${bodyText.substring(0, 50)}${bodyText.length > 50 ? '...' : ''}`,
+                () => {
+                  useUIStore.getState().setActivePanel('dms');
+                  navigate(`/app/dms/${data.payload.conversation_id}`);
+                }
+              );
+            })();
+          }
+        }
         break;
+      }
       case 'match.queued':
         setMatchStatus('waiting', data.payload.target_gender);
         break;
@@ -41,20 +85,19 @@ export function useWebSocket() {
         setMatchStatus('idle');
         break;
       case 'match.found':
-        // Set peer ID before joining so it's available when ChatRoom mounts
+        // Ephemeral P2P chat: set peer/room directly without joining a DB room
         setMatchPeerId(data.payload.peer_id);
-        if (globalWs && globalWs.readyState === WebSocket.OPEN) {
-          globalWs.send(JSON.stringify({
-            type: 'chat.join',
-            payload: { room_id: data.payload.room_id }
-          }));
-        }
+        setActiveRoomId(data.payload.room_id);
+        setTimeout(() => setMatchStatus('matched', undefined), 0);
         break;
       case 'chat.joined':
         // Set activeRoomId first, then switch status in next tick
         // so ChatRoom never renders with null activeRoomId
         setActiveRoomId(data.payload.room_id);
         setTimeout(() => setMatchStatus('matched', undefined), 0);
+        break;
+      case 'chat.left':
+        // Acknowledgment that we successfully left a room. Ignore.
         break;
       case 'chat.peer_left':
         // Peer left — return to idle. clearMatchChat avoids wiping DM history.
@@ -88,7 +131,7 @@ export function useWebSocket() {
         console.log('Unhandled WS message:', data.type, data);
     }
   }, [addMessage, addDMMessage, updateMessage, deleteMessage,
-      setMatchStatus, setActiveRoomId, setMatchPeerId, addNotification]);
+      setMatchStatus, setActiveRoomId, setMatchPeerId, addNotification, navigate]);
 
   // Always keep the ref pointing to the latest handleMessage
   handleMessageRef.current = handleMessage;
