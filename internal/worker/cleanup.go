@@ -9,28 +9,22 @@ import (
 )
 
 // StartCleanupWorker starts a background goroutine that periodically:
-//   - Deletes messages older than 30 days from public groups (daily)
+//   - Trims group chats to keep only the latest 1000 messages (hourly)
 //   - Purges expired anonymous/guest user accounts (hourly)
 func StartCleanupWorker(store *db.Store) {
 	go func() {
 		log.Println("worker: cleanup worker started")
 
-		dailyTicker := time.NewTicker(24 * time.Hour)
 		hourlyTicker := time.NewTicker(1 * time.Hour)
-		defer dailyTicker.Stop()
 		defer hourlyTicker.Stop()
 
 		// Run both immediately on boot
 		cleanupOldMessages(store)
 		purgeExpiredGuests(store)
 
-		for {
-			select {
-			case <-dailyTicker.C:
-				cleanupOldMessages(store)
-			case <-hourlyTicker.C:
-				purgeExpiredGuests(store)
-			}
+		for range hourlyTicker.C {
+			cleanupOldMessages(store)
+			purgeExpiredGuests(store)
 		}
 	}()
 }
@@ -39,16 +33,25 @@ func cleanupOldMessages(store *db.Store) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
+	// Delete messages in group chats that exceed the 1000 message limit
 	cmd, err := store.Pool.Exec(ctx, `
-		DELETE FROM messages 
-		WHERE created_at < NOW() - INTERVAL '30 days'
+		WITH RankedMessages AS (
+			SELECT m.id, ROW_NUMBER() OVER(PARTITION BY m.conversation_id ORDER BY m.created_at DESC) as rn
+			FROM messages m
+			JOIN conversations c ON m.conversation_id = c.id
+			WHERE c.type = 'group'
+		)
+		DELETE FROM messages
+		WHERE id IN (
+			SELECT id FROM RankedMessages WHERE rn > 1000
+		)
 	`)
 	if err != nil {
-		log.Printf("worker: failed to cleanup old messages: %v", err)
+		log.Printf("worker: failed to cap group messages: %v", err)
 		return
 	}
 	if n := cmd.RowsAffected(); n > 0 {
-		log.Printf("worker: deleted %d messages older than 30 days", n)
+		log.Printf("worker: deleted %d messages exceeding the 1000-message group cap", n)
 	}
 }
 
