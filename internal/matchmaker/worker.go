@@ -364,6 +364,8 @@ func (w *Worker) finalizeMatch(a, b *MatchTicket) {
 	if _, err := pipe.Exec(ctx); err != nil {
 		log.Printf("matchmaker: failed to remove tickets for %s and %s: %v",
 			a.UserID, b.UserID, err)
+	}
+
 	// 2. Generate an ephemeral Room ID for the frontend UI grouping
 	roomID := uuid.New()
 
