@@ -1,10 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, MoreVertical, Phone, Video, Loader, UserPlus, Lock } from 'lucide-react';
+import { Send, MoreVertical, Phone, Video, Loader, MessageSquare, Lock, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
-import { generateKeyPair, exportPublicKey, exportPrivateKeyToJwk, encryptE2EPayload, decryptE2EPayload } from '../lib/crypto';
+import {
+  generateKeyPair, exportPublicKey, exportPrivateKeyToJwk,
+  encryptMessage, decryptMessage, isEncrypted,
+  storePrivateKey, loadPrivateKey,
+} from '../lib/crypto';
+
+// Stable fallback — prevents Zustand getSnapshot infinite loop
+const EMPTY_WS_MSGS: import('../store/chatStore').DMMessage[] = [];
 
 export function DMs() {
   const navigate = useNavigate();
@@ -14,34 +21,44 @@ export function DMs() {
 
   const [dms, setDms] = useState<any[]>([]);
   const [loadingDms, setLoadingDms] = useState(true);
-
-  // E2EE Key Initialization
-  useEffect(() => {
-    if (!user) return;
-    const checkKeys = async () => {
-      const storedPriv = localStorage.getItem(`tryblynx_privkey_${user.id}`);
-      if (!user.public_key || !storedPriv) {
-        try {
-          const kp = await generateKeyPair();
-          const pub = await exportPublicKey(kp.publicKey);
-          const priv = await exportPrivateKeyToJwk(kp.privateKey);
-          localStorage.setItem(`tryblynx_privkey_${user.id}`, JSON.stringify(priv));
-          await api.updateProfile({ ...user, public_key: pub });
-          updateUser({ public_key: pub });
-        } catch (err) {
-          console.error('Failed to generate keys:', err);
-        }
-      }
-    };
-    checkKeys();
-  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const [messages, setMessages] = useState<any[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [newMessage, setNewMessage] = useState('');
+  const [e2eeReady, setE2eeReady] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch DMs list once
+  // ── Step 1: Ensure this user has a keypair ────────────────────────────────
+  // Mirrors Instagram's approach: on first DM open, generate RSA keypair,
+  // store privkey in localStorage (never sent to server), upload pubkey.
+  useEffect(() => {
+    if (!user) return;
+    const init = async () => {
+      const existingPriv = loadPrivateKey(user.id);
+      if (user.public_key && existingPriv) {
+        // Keys already exist — ready
+        setE2eeReady(true);
+        return;
+      }
+      try {
+        const kp = await generateKeyPair();
+        const pub = await exportPublicKey(kp.publicKey);
+        const priv = await exportPrivateKeyToJwk(kp.privateKey);
+        storePrivateKey(user.id, priv);
+        await api.updateProfile({ ...user, public_key: pub });
+        updateUser({ public_key: pub });
+        setE2eeReady(true);
+      } catch (err) {
+        console.error('[E2EE] Key generation failed:', err);
+        // Still allow using DMs in plaintext fallback
+        setE2eeReady(true);
+      }
+    };
+    init();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // ── Step 2: Load DM list ──────────────────────────────────────────────────
   useEffect(() => {
     api.getDMs()
       .then(res => {
@@ -49,284 +66,339 @@ export function DMs() {
         setDms(chats);
         if (!id && chats.length > 0) navigate(`/dms/${chats[0].id}`, { replace: true });
       })
-      .catch(err => console.error('Failed to load DMs:', err))
+      .catch(err => console.error('[DMs] Failed to load list:', err))
       .finally(() => setLoadingDms(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Fetch + decrypt messages when active DM changes
+  // ── Step 3: Load + decrypt message history when conversation changes ──────
   useEffect(() => {
-    if (!id || !user) return;
+    if (!id || !user || !e2eeReady) return;
     setMessages([]);
+    setLoadingMessages(true);
+
     const fetchAndDecrypt = async () => {
-      setLoadingMessages(true);
       try {
         const res = await api.getMessages(id);
-        // FIX: Backend returns newest-first; reverse for chronological display
-        const msgs = (res.messages || []).slice().reverse();
-        const privStr = localStorage.getItem(`tryblynx_privkey_${user.id}`);
-        const privJwk = privStr ? JSON.parse(privStr) : null;
-        const decryptedMsgs = await Promise.all(msgs.map(async (msg: any) => {
-          // Normalize to message_id field
-          const normalized = { ...msg, message_id: msg.message_id || msg.id };
-          if (!msg.body?.startsWith('{')) return normalized;
-          if (!privJwk) return { ...normalized, body: '[Encrypted — Missing Key]' };
-          const plain = await decryptE2EPayload(msg.body, privJwk, msg.sender_id === user.id);
-          return { ...normalized, body: plain };
+        // Backend returns newest-first; reverse for chronological display
+        const msgs: any[] = (res.messages || []).slice().reverse();
+        const privJwk = loadPrivateKey(user.id);
+
+        const decrypted = await Promise.all(msgs.map(async m => {
+          const mid = m.message_id || m.id;
+          if (!isEncrypted(m.body)) return { ...m, message_id: mid };
+          if (!privJwk) return { ...m, message_id: mid, body: '🔒 Missing key' };
+          const plain = await decryptMessage(m.body, privJwk, m.sender_id === user.id);
+          return { ...m, message_id: mid, body: plain, _encrypted: true };
         }));
-        setMessages(decryptedMsgs);
+
+        setMessages(decrypted);
       } catch (err) {
-        console.error('Failed to load messages:', err);
+        console.error('[DMs] Failed to fetch messages:', err);
       } finally {
         setLoadingMessages(false);
       }
     };
-    fetchAndDecrypt();
-  }, [id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // FIX: Scroll to bottom whenever messages change
+    fetchAndDecrypt();
+  }, [id, user?.id, e2eeReady]);
+
+  // ── Step 4: Merge incoming WS messages (decrypt on arrival) ──────────────
+  const wsMessages = useChatStore(s => s.dmMessages[id ?? ''] ?? EMPTY_WS_MSGS);
+  const wsLen = wsMessages.length;
+
+  useEffect(() => {
+    if (!id || wsLen === 0 || !user) return;
+    const latest = wsMessages[wsLen - 1];
+    if (!latest || latest.conversation_id !== id) return;
+
+    setMessages(prev => {
+      const mid = latest.message_id || (latest as any).id;
+      if (prev.some(m => m.message_id === mid)) return prev; // already present
+
+      // Decrypt async then re-set
+      const privJwk = loadPrivateKey(user.id);
+      (async () => {
+        let body = latest.body;
+        let encrypted = false;
+        if (isEncrypted(latest.body) && privJwk) {
+          body = await decryptMessage(latest.body, privJwk, latest.sender_id === user.id);
+          encrypted = true;
+        }
+        setMessages(p => {
+          if (p.some(m => m.message_id === mid)) return p;
+          return [...p, { ...latest, message_id: mid, body, _encrypted: encrypted }];
+        });
+      })();
+
+      return prev; // optimistic no-op until async completes
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsLen, id]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Listen for new WebSocket messages for this conversation
-  // FIX: use ?? [] instead of || [] to avoid creating a new array every render (infinite loop)
-  const wsMessages = useChatStore(s => s.dmMessages[id ?? '']) ?? [];
-  const wsMessagesLen = wsMessages.length;
-
-  useEffect(() => {
-    if (!id || wsMessagesLen === 0 || !user) return;
-    const latest = wsMessages[wsMessagesLen - 1];
-    if (!latest || latest.conversation_id !== id) return;
-
-    // FIX: dedup using message_id field (backend shape), not id
-    setMessages(prev => {
-      const isDup = prev.some(
-        m => m.message_id === latest.message_id || m.message_id === (latest as any).id
-      );
-      if (isDup) return prev;
-
-      const decryptAndAdd = async () => {
-        const privStr = localStorage.getItem(`tryblynx_privkey_${user.id}`);
-        const privJwk = privStr ? JSON.parse(privStr) : null;
-        let plainBody = latest.body;
-        if (latest.body?.startsWith('{') && privJwk) {
-          plainBody = await decryptE2EPayload(latest.body, privJwk, latest.sender_id === user.id);
-        } else if (latest.body?.startsWith('{')) {
-          plainBody = '[Encrypted — Missing Key]';
-        }
-        setMessages(p => {
-          if (p.some(m => m.message_id === latest.message_id)) return p;
-          return [...p, { ...latest, body: plainBody, message_id: latest.message_id || (latest as any).id }];
-        });
-      };
-      decryptAndAdd();
-      return prev; // placeholder — actual update happens in decryptAndAdd
-    });
-  }, [wsMessagesLen, id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // ── Step 5: Send message (encrypt if both keys available) ─────────────────
   const activeChat = dms.find(c => c.id === id);
 
-  const handleSendMessage = useCallback(async () => {
-    if (!newMessage.trim() || !id || !activeChat || !user) return;
-
-    let payloadStr = newMessage;
-    if (user.public_key && activeChat.peer_public_key) {
-      try {
-        payloadStr = await encryptE2EPayload(newMessage, user.public_key, activeChat.peer_public_key);
-      } catch {
-        return alert('Encryption failed. Message not sent.');
-      }
-    } else if (!activeChat.peer_public_key) {
-      if (!window.confirm('Recipient has no E2EE key. Send unencrypted?')) return;
-    }
-
-    const plainText = newMessage;
+  const handleSend = useCallback(async () => {
+    if (!newMessage.trim() || !id || !user || !activeChat) return;
+    const text = newMessage.trim();
     setNewMessage('');
-    try {
-      const msg = await api.sendMessage(id, payloadStr);
-      setMessages(prev => {
-        const normalized = { ...msg, message_id: msg.id || msg.message_id, body: plainText };
-        if (prev.some(m => m.message_id === normalized.message_id)) return prev;
-        return [...prev, normalized];
-      });
-    } catch (err: any) {
-      console.error('Failed to send:', err);
-      setNewMessage(plainText);
-    }
-  }, [newMessage, id, activeChat, user]);
 
-  const fmt = (s: string) => s ? new Date(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    // Try to encrypt; fall back to plaintext if either party has no pubkey
+    let body = text;
+    let encrypted = false;
+    const myPub = user.public_key;
+    const peerPub = activeChat.peer_public_key;
+
+    if (myPub && peerPub) {
+      try {
+        body = await encryptMessage(text, myPub, peerPub);
+        encrypted = true;
+      } catch (err) {
+        console.error('[E2EE] Encrypt failed, falling back to plaintext:', err);
+        body = text;
+      }
+    }
+
+    // Optimistic insert
+    const tempId = 'temp_' + Date.now();
+    setMessages(prev => [...prev, {
+      message_id: tempId,
+      sender_id: user.id,
+      body: text, // always show plaintext locally
+      created_at: new Date().toISOString(),
+      _encrypted: encrypted,
+    }]);
+
+    try {
+      // Backend: POST /api/dm/send { recipient_id, body }
+      const msg = await api.sendDM(activeChat.peer_id, body);
+      const realId = msg.message_id || msg.id;
+      // Replace temp with real
+      setMessages(prev => prev.map(m =>
+        m.message_id === tempId ? { ...m, message_id: realId } : m
+      ));
+    } catch (err) {
+      console.error('[DMs] Send failed:', err);
+      // Remove optimistic message on failure
+      setMessages(prev => prev.filter(m => m.message_id !== tempId));
+    }
+  }, [newMessage, id, user, activeChat]);
+
+  // ── Render helpers ────────────────────────────────────────────────────────
+  const fmt = (d: string) => {
+    if (!d) return '';
+    const date = new Date(d);
+    const now = new Date();
+    return date.toDateString() === now.toDateString()
+      ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  };
+
+  const peerHasKey = !!activeChat?.peer_public_key;
+  const myHasKey = !!user?.public_key;
+  const isE2EE = peerHasKey && myHasKey;
 
   return (
     <div style={{ flex: 1, display: 'flex', background: 'var(--blynx-900)', overflow: 'hidden' }}>
 
-      {/* ── LEFT PANE ── */}
-      <div style={{ width: '300px', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--blynx-850)', flexShrink: 0 }}>
-        <div style={{ padding: '20px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0, fontSize: '18px', color: 'white', fontWeight: 700 }}>Direct Messages</h2>
-          <button
-            onClick={() => navigate('/search')}
-            title="Find friends to message"
-            style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', borderRadius: '6px', display: 'flex' }}
-          >
-            <UserPlus size={18} />
-          </button>
+      {/* ── DM list sidebar ── */}
+      <div style={{ width: '280px', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--blynx-850)', flexShrink: 0 }}>
+        <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: 'white' }}>Direct Messages</h2>
+          {/* E2EE indicator */}
+          <div title="End-to-end encrypted" style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 7px', borderRadius: '4px', background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)' }}>
+            <Lock size={10} color="#4ade80" />
+            <span style={{ fontSize: '10px', color: '#4ade80', fontWeight: 700 }}>E2EE</span>
+          </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {loadingDms ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '20px' }}><Loader className="spin" color="var(--accent)" /></div>
-          ) : dms.length === 0 ? (
-            <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
-              <Lock size={32} style={{ marginBottom: '12px', opacity: 0.4 }} />
-              <p style={{ margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)' }}>No messages yet</p>
-              <p style={{ margin: 0, fontSize: '12px' }}>Add friends first, then you can DM them.</p>
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '24px' }}>
+              <Loader size={20} color="var(--accent)" style={{ animation: 'spin 1s linear infinite' }} />
             </div>
-          ) : (
-            dms.map(chat => {
-              const isActive = chat.id === id;
-              return (
-                <div
-                  key={chat.id}
-                  onClick={() => navigate(`/dms/${chat.id}`)}
-                  style={{
-                    display: 'flex', alignItems: 'center', padding: '12px 16px',
-                    cursor: 'pointer', borderBottom: '1px solid var(--border)',
-                    background: isActive ? 'rgba(88,101,242,0.12)' : 'transparent',
-                    transition: 'background 0.1s'
-                  }}
-                  onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--blynx-800)'; }}
-                  onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <div style={{
-                    width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600,
-                    marginRight: '12px', flexShrink: 0, overflow: 'hidden'
-                  }}>
-                    {chat.peer_avatar
-                      ? <img src={chat.peer_avatar} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-                      : (chat.peer_name?.charAt(0).toUpperCase() || 'U')}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '3px' }}>
-                      <span style={{ color: 'white', fontWeight: 600, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {chat.peer_name}
-                      </span>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '11px', flexShrink: 0, marginLeft: '8px' }}>{fmt(chat.last_message_at)}</span>
+          ) : dms.length === 0 ? (
+            <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+              <MessageSquare size={32} style={{ marginBottom: '8px', opacity: 0.3 }} />
+              <p style={{ margin: 0 }}>No messages yet</p>
+            </div>
+          ) : dms.map(chat => {
+            const isActive = chat.id === id;
+            return (
+              <div key={chat.id} onClick={() => navigate(`/dms/${chat.id}`)} style={{
+                display: 'flex', alignItems: 'center', padding: '10px 14px', cursor: 'pointer',
+                borderBottom: '1px solid var(--border)',
+                background: isActive ? 'var(--blynx-750)' : 'transparent', transition: 'background 0.1s',
+              }}
+                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--blynx-800)'; }}
+                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+              >
+                <div style={{ width: '38px', height: '38px', borderRadius: '50%', flexShrink: 0, marginRight: '10px', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '15px' }}>
+                  {(chat.peer_name || 'U').charAt(0).toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span style={{ color: 'white', fontWeight: 600, fontSize: '13px' }}>{chat.peer_name}</span>
+                      {chat.peer_public_key && <Lock size={9} color="#4ade80" />}
                     </div>
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                      {chat.last_message || 'No messages yet'}
+                    <span style={{ color: 'var(--text-muted)', fontSize: '11px', flexShrink: 0, marginLeft: '6px' }}>
+                      {fmt(chat.last_message_at)}
                     </span>
                   </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-
-      {/* ── CENTER PANE ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--blynx-900)', minWidth: 0 }}>
-        {id && activeChat ? (
-          <>
-            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--blynx-850)', flexShrink: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, overflow: 'hidden' }}>
-                  {activeChat.peer_avatar
-                    ? <img src={activeChat.peer_avatar} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-                    : activeChat.peer_name?.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <h3 style={{ margin: 0, color: 'white', fontSize: '15px', fontWeight: 700 }}>{activeChat.peer_name}</h3>
-                  <span style={{ fontSize: '11px', color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <Lock size={10} /> End-to-end encrypted
+                  <span style={{ color: 'var(--text-muted)', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+                    {/* Don't show ciphertext in preview */}
+                    {chat.last_message?.startsWith('{') ? '🔒 Encrypted message' : (chat.last_message || 'No messages yet')}
                   </span>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '16px', color: 'var(--text-secondary)' }}>
-                <Phone size={18} style={{ cursor: 'pointer' }} />
-                <Video size={18} style={{ cursor: 'pointer' }} />
-                <MoreVertical size={18} style={{ cursor: 'pointer' }} />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Chat area ── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {id && activeChat ? (
+          <>
+            {/* Header */}
+            <div style={{ height: '52px', padding: '0 16px', borderBottom: '1px solid var(--border)', background: 'var(--blynx-850)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '13px' }}>
+                  {(activeChat.peer_name || 'U').charAt(0).toUpperCase()}
+                </div>
+                <span style={{ fontWeight: 700, fontSize: '14px', color: 'white' }}>{activeChat.peer_name}</span>
+                {/* E2EE status badge */}
+                <div
+                  title={isE2EE ? 'Messages in this conversation are end-to-end encrypted. TryBlynx cannot read them.' : 'End-to-end encryption not available — the other person needs to open their DMs first.'}
+                  style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '4px', background: isE2EE ? 'rgba(74,222,128,0.08)' : 'rgba(250,166,26,0.08)', border: `1px solid ${isE2EE ? 'rgba(74,222,128,0.2)' : 'rgba(250,166,26,0.2)'}`, cursor: 'help' }}>
+                  {isE2EE ? <ShieldCheck size={11} color="#4ade80" /> : <Lock size={11} color="#faa61a" />}
+                  <span style={{ fontSize: '10px', color: isE2EE ? '#4ade80' : '#faa61a', fontWeight: 700 }}>{isE2EE ? 'E2EE' : 'Pending'}</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
+                {[Phone, Video, MoreVertical].map((Icon, i) => (
+                  <button key={i} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '7px', borderRadius: '8px', display: 'flex', transition: 'background 0.1s' }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--blynx-750)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                    <Icon size={17} />
+                  </button>
+                ))}
               </div>
             </div>
 
+            {/* E2EE info banner — shown once at top of conversation */}
+            {isE2EE && (
+              <div style={{ padding: '8px 16px', background: 'rgba(74,222,128,0.04)', borderBottom: '1px solid rgba(74,222,128,0.08)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'rgba(74,222,128,0.7)', flexShrink: 0 }}>
+                <Lock size={11} />
+                Messages are end-to-end encrypted. Only you and {activeChat.peer_name} can read them.
+              </div>
+            )}
+
             {/* Messages */}
-            <div style={{ flex: 1, padding: '20px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column' }}>
               {loadingMessages ? (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><Loader className="spin" color="var(--accent)" /></div>
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '32px' }}>
+                  <Loader size={20} color="var(--accent)" style={{ animation: 'spin 1s linear infinite' }} />
+                </div>
               ) : messages.length === 0 ? (
-                <div style={{ textAlign: 'center', color: 'var(--text-muted)', margin: 'auto' }}>
-                  <h3 style={{ color: 'white', marginBottom: '8px' }}>Say hi to {activeChat.peer_name}! 👋</h3>
-                  <p style={{ margin: 0, fontSize: '13px' }}>This is the start of your private conversation.</p>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                  <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: '20px' }}>
+                    {(activeChat.peer_name || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  <p style={{ color: 'white', fontWeight: 600, margin: 0, fontSize: '15px' }}>{activeChat.peer_name}</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: 0 }}>This is the start of your conversation.</p>
+                  {isE2EE && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '20px', background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.15)' }}>
+                      <Lock size={11} color="#4ade80" />
+                      <span style={{ fontSize: '11px', color: '#4ade80' }}>End-to-end encrypted</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 messages.map((msg, i) => {
                   const isMe = msg.sender_id === user?.id;
-                  const key = msg.message_id || msg.id || i;
+                  const prev = messages[i - 1];
+                  const next = messages[i + 1];
+                  const isGroupStart = !prev || prev.sender_id !== msg.sender_id;
+                  const isGroupEnd   = !next || next.sender_id !== msg.sender_id;
+                  const isSolo       = isGroupStart && isGroupEnd;
+                  const r = '18px', s = '4px';
+                  let borderRadius: string;
+                  if (isMe) {
+                    if (isSolo)            borderRadius = `${r} ${r} ${r} ${r}`;
+                    else if (isGroupStart) borderRadius = `${r} ${r} ${s} ${r}`;
+                    else if (isGroupEnd)   borderRadius = `${r} ${r} ${r} ${s}`;
+                    else                   borderRadius = `${r} ${r} ${s} ${s}`;
+                  } else {
+                    if (isSolo)            borderRadius = `${r} ${r} ${r} ${r}`;
+                    else if (isGroupStart) borderRadius = `${r} ${r} ${r} ${s}`;
+                    else if (isGroupEnd)   borderRadius = `${r} ${r} ${s} ${r}`;
+                    else                   borderRadius = `${r} ${r} ${s} ${s}`;
+                  }
                   return (
-                    <div key={key} style={{ display: 'flex', gap: '10px', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end' }}>
-                      <div style={{
-                        width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0,
-                        background: isMe ? 'linear-gradient(135deg, var(--accent), #7289da)' : 'linear-gradient(135deg, var(--teal), #2b8a3e)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: '13px',
-                        overflow: 'hidden',
-                      }}>
-                        {isMe
-                          ? (user?.avatar_url ? <img src={user.avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" /> : (user?.display_name || user?.username || 'U').charAt(0).toUpperCase())
-                          : (activeChat.peer_avatar ? <img src={activeChat.peer_avatar} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" /> : activeChat.peer_name?.charAt(0).toUpperCase())}
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '68%' }}>
-                        <div style={{ display: 'flex', gap: '6px', alignItems: 'baseline', marginBottom: '3px' }}>
-                          <span style={{ color: 'white', fontWeight: 600, fontSize: '13px' }}>
-                            {isMe ? (user?.display_name || user?.username) : activeChat.peer_name}
-                          </span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
-                            {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
+                    <div key={msg.message_id} style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: '8px', marginTop: isGroupStart ? '12px' : '2px', justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                      {!isMe && (
+                        <div style={{ width: '28px', flexShrink: 0, alignSelf: 'flex-end', marginBottom: '2px' }}>
+                          {isGroupEnd ? (
+                            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: 'white' }}>
+                              {(activeChat.peer_name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                          ) : <div style={{ width: '28px' }} />}
                         </div>
-                        <div style={{
-                          background: isMe ? 'var(--accent)' : 'var(--blynx-800)',
-                          color: isMe ? 'white' : 'var(--text-primary)',
-                          padding: '10px 14px', fontSize: '14px', lineHeight: '1.5',
-                          borderRadius: isMe ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
-                          wordBreak: 'break-word',
-                        }}>
+                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '70%' }}>
+                        <div style={{ padding: '9px 14px', borderRadius, background: isMe ? 'linear-gradient(135deg, var(--accent) 0%, #7289da 100%)' : 'var(--blynx-750)', color: 'white', fontSize: '14px', lineHeight: 1.45, border: isMe ? 'none' : '1px solid var(--border)', wordBreak: 'break-word', boxShadow: isMe ? '0 2px 8px rgba(88,101,242,0.2)' : 'none' }}>
                           {msg.body}
                         </div>
+                        {isGroupEnd && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', ...(isMe ? { marginRight: '2px' } : { marginLeft: '2px' }) }}>
+                            {msg._encrypted && <Lock size={9} color="rgba(74,222,128,0.6)" />}
+                            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{fmt(msg.created_at)}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
                 })
               )}
-              {/* FIX: ref at BOTTOM so scrollIntoView goes to newest message */}
               <div ref={messagesEndRef} />
             </div>
 
             {/* Input */}
-            <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
-              <div style={{ display: 'flex', gap: '10px', background: 'var(--blynx-800)', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border)' }}>
+            <div style={{ padding: '12px 14px', background: 'var(--blynx-850)', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+              {/* Encryption hint */}
+              {!isE2EE && (
+                <p style={{ margin: '0 0 8px', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Lock size={10} />
+                  {!myHasKey ? 'Setting up encryption…' : `Waiting for ${activeChat.peer_name} to open DMs to enable E2EE`}
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: '8px' }}>
                 <input
-                  type="text"
-                  value={newMessage}
+                  ref={inputRef}
+                  type="text" value={newMessage}
                   onChange={e => setNewMessage(e.target.value)}
-                  placeholder={`Message ${activeChat.peer_name}...`}
-                  style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'white', fontSize: '14px' }}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                  placeholder={`Message ${activeChat.peer_name}${isE2EE ? ' 🔒' : ''}…`}
+                  style={{ flex: 1, background: 'var(--blynx-750)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 14px', color: 'white', fontSize: '14px', outline: 'none', fontFamily: 'inherit' }}
+                  onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--accent-glow)'; }}
+                  onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none'; }}
                 />
-                <button
-                  onClick={handleSendMessage}
-                  disabled={!newMessage.trim()}
-                  className="btn-accent"
-                  style={{ padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px' }}
-                >
-                  <Send size={15} /> Send
+                <button onClick={handleSend} disabled={!newMessage.trim()} style={{ width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0, border: 'none', cursor: newMessage.trim() ? 'pointer' : 'not-allowed', background: newMessage.trim() ? 'var(--accent)' : 'var(--blynx-700)', color: newMessage.trim() ? 'white' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
+                  <Send size={16} />
                 </button>
               </div>
             </div>
           </>
         ) : (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', flexDirection: 'column', gap: '12px' }}>
-            <Lock size={40} style={{ opacity: 0.3 }} />
-            <p style={{ margin: 0, fontSize: '15px' }}>Select a conversation to start messaging</p>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '8px' }}>
+            <MessageSquare size={40} color="var(--text-muted)" style={{ opacity: 0.3 }} />
+            <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: 0 }}>Select a conversation</p>
           </div>
         )}
       </div>
