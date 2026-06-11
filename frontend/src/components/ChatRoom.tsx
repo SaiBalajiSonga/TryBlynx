@@ -30,7 +30,15 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
   useEffect(() => {
     if (matchPeerId) {
       api.getUserProfile(matchPeerId)
-        .then(data => setPeerProfile(data))
+        .then(data => {
+          setPeerProfile(data);
+          useChatStore.getState().addRecentMatch({
+            peer_id: matchPeerId,
+            username: data.username,
+            display_name: data.display_name,
+            matched_at: Date.now()
+          });
+        })
         .catch(err => console.error("Failed to fetch peer profile", err));
     } else {
       setPeerProfile(null);
@@ -44,7 +52,11 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim() || !activeRoomId) return;
-    sendMessage('chat.message', { room_id: activeRoomId, body: message.trim() });
+    if (matchPeerId) {
+      sendMessage('match.message', { peer_id: matchPeerId, room_id: activeRoomId, body: message.trim() });
+    } else {
+      sendMessage('chat.message', { room_id: activeRoomId, body: message.trim() });
+    }
     setMessage('');
   };
 
@@ -154,7 +166,6 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
         padding: '16px 20px',
         display: 'flex',
         flexDirection: 'column',
-        gap: '2px',
       }}>
         {messages.length === 0 && (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -184,7 +195,7 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
           const isGroupEnd = !nextMsg || nextMsg.sender_id !== msg.sender_id;
           const isSolo = isGroupStart && isGroupEnd;
 
-          const r = '18px';
+          const r = '22px';
           const s = '4px';
           let borderRadius: string;
           if (isMe) {
@@ -214,7 +225,7 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
               }}
             >
               {!isMe && (
-                <div style={{ width: '32px', flexShrink: 0 }}>
+                <div style={{ width: '32px', flexShrink: 0, marginBottom: isGroupEnd ? '20px' : '0' }}>
                   {isGroupEnd && (
                     <div style={{
                       width: '32px', height: '32px', borderRadius: '50%',
@@ -239,7 +250,7 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
                   fontSize: '15px',
                   lineHeight: '1.4',
                   wordBreak: 'break-word',
-                  border: isMe ? 'none' : '1px solid var(--border)',
+                  border: 'none',
                   boxShadow: isMe ? '0 2px 8px rgba(88,101,242,0.25)' : 'none',
                 }}>
                   {msg.body}

@@ -11,6 +11,7 @@ export function MatchPanel({ mode }: { mode: MatchMode }) {
   const { addNotification } = useUIStore();
   const wsStatus = useChatStore((s) => s.wsStatus);
   const matchStatus = useChatStore((s) => s.matchStatus);
+  const recentMatches = useChatStore((s) => s.recentMatches);
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -101,6 +102,36 @@ export function MatchPanel({ mode }: { mode: MatchMode }) {
           <p style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-3)' }}>
             Waiting for server connection…
           </p>
+        )}
+
+        {recentMatches.length > 0 && !isWaiting && (
+          <div style={{ marginTop: '48px', textAlign: 'left', borderTop: '1px solid var(--border)', paddingTop: '24px' }}>
+            <h3 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-3)', fontWeight: 700, letterSpacing: '1px', marginBottom: '16px' }}>
+              Recent Matches (Session)
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
+              {recentMatches.map(match => (
+                <div key={match.peer_id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: 'var(--bg-elevated)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                  <div style={{
+                    width: '36px', height: '36px', borderRadius: '50%',
+                    background: 'linear-gradient(135deg, var(--accent), #7289da)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '14px', fontWeight: 700, color: 'white', flexShrink: 0
+                  }}>
+                    {(match.display_name || match.username).charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {match.display_name || match.username}
+                    </span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>
+                      Matched at {new Date(match.matched_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
     </div>
