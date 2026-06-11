@@ -13,13 +13,13 @@ interface UIState {
   sidebarOpen: boolean;
   activePanel: 'home' | 'chat' | 'video' | 'group' | 'dms' | 'notifications' | 'profile' | 'settings';
   notifications: Notification[];
-  toasts: { id: string; type: 'success' | 'error' | 'info'; message: string }[];
+  toasts: { id: string; type: 'success' | 'error' | 'info'; message: string; onClick?: () => void }[];
   setSidebarOpen: (v: boolean) => void;
   toggleSidebar: () => void;
   setActivePanel: (panel: UIState['activePanel']) => void;
   addNotification: (n: Omit<Notification, 'id' | 'read' | 'createdAt'>) => void;
   markAllRead: () => void;
-  showToast: (type: 'success' | 'error' | 'info', message: string) => void;
+  showToast: (type: 'success' | 'error' | 'info', message: string, onClick?: () => void) => void;
   dismissToast: (id: string) => void;
 }
 
@@ -46,9 +46,9 @@ export const useUIStore = create<UIState>((set, get) => ({
     notifications: s.notifications.map(n => ({ ...n, read: true })),
   })),
 
-  showToast: (type, message) => {
+  showToast: (type, message, onClick) => {
     const id = Math.random().toString(36).slice(2);
-    set((s) => ({ toasts: [...s.toasts, { id, type, message }] }));
+    set((s) => ({ toasts: [...s.toasts, { id, type, message, onClick }] }));
     setTimeout(() => get().dismissToast(id), 4000);
   },
 
