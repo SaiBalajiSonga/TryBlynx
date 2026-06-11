@@ -468,7 +468,7 @@ func (s *Store) GetMessages(ctx context.Context, requestingUserID uuid.UUID, con
 
 	rows, err := s.Pool.Query(ctx, `
 		SELECT m.id, m.conversation_id, m.sender_id, m.body, m.is_edited, m.created_at,
-		       COALESCE(u.display_name, u.username, 'User') AS sender_name
+		       COALESCE(NULLIF(u.display_name, ''), NULLIF(u.username, ''), 'User') AS sender_name
 		FROM messages m
 		LEFT JOIN users u ON m.sender_id = u.id
 		WHERE m.conversation_id = $1 AND m.created_at < $2

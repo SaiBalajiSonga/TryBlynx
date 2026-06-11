@@ -135,11 +135,19 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Step 5: Create authenticated Client ──────────────────
+	displayName := user.DisplayName
+	if displayName == "" {
+		displayName = user.Username
+	}
+	if displayName == "" {
+		displayName = "User"
+	}
+
 	client := &Client{
 		Hub:          h,
 		Conn:         conn,
 		UserID:       claims.UserID,
-		Username:     user.Username,
+		Username:     displayName,
 		IsVIP:        claims.IsVIP,
 		Shadowbanned: claims.Shadowbanned,
 		Send:         make(chan []byte, sendChannelSize),
