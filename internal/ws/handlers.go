@@ -68,7 +68,7 @@ type OutboundMessage struct {
 // isTextMessage returns true for message types that carry user-
 // authored text and should be checked by the duplicate filter.
 func isTextMessage(msgType string) bool {
-	return msgType == "chat.message" || msgType == "dm.message"
+	return msgType == "chat.message" || msgType == "dm.message" || msgType == "match.message"
 }
 
 // extractBody performs a lightweight extraction of the "body"
@@ -124,6 +124,8 @@ func handleMessage(c *Client, msg *InboundMessage) {
 		handleMatchFind(c, msg.Payload)
 	case "match.cancel":
 		handleMatchCancel(c, msg.Payload)
+	case "match.message":
+		handleMatchMessage(c, msg.Payload)
 
 	// ── WebRTC Signaling ─────────────────────────────────
 	case "webrtc.offer", "webrtc.answer", "webrtc.ice":
@@ -169,6 +171,12 @@ type dmMessagePayload struct {
 
 type matchFindPayload struct {
 	TargetGender string `json:"target_gender"` // "male","female","any"
+}
+
+type matchMessagePayload struct {
+	PeerID string `json:"peer_id"` // Target user UUID
+	RoomID string `json:"room_id"` // Ephemeral Room ID for UI
+	Body   string `json:"body"`    // 1-5000 characters
 }
 
 type webrtcSignalPayload struct {
@@ -648,6 +656,49 @@ func handleMatchCancel(c *Client, _ json.RawMessage) {
 	})
 
 	log.Printf("ws-handler: user %s cancelled matchmaking", c.UserID)
+}
+
+// handleMatchMessage processes "match.message" messages.
+// It relays an ephemeral chat message directly to the peer without DB persistence.
+func handleMatchMessage(c *Client, payload json.RawMessage) {
+	var p matchMessagePayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.PeerID == "" || p.Body == "" {
+		c.sendError("invalid match.message payload")
+		return
+	}
+	if len(p.Body) > 5000 {
+		c.sendError("message too long (max 5000 characters)")
+		return
+	}
+
+	peerID, err := uuid.Parse(p.PeerID)
+	if err != nil {
+		c.sendError("invalid peer_id")
+		return
+	}
+
+	outbound := OutboundMessage{
+		Type: "match.message",
+		Payload: map[string]interface{}{
+			"message_id":  uuid.New().String(),
+			"sender_id":   c.UserID.String(),
+			"sender_name": c.Username,
+			"room_id":     p.RoomID,
+			"body":        p.Body,
+			"created_at":  time.Now().Format(time.RFC3339Nano),
+		},
+	}
+	outData, _ := json.Marshal(outbound)
+
+	// Send confirmation to the sender
+	select {
+	case c.Send <- outData:
+	default:
+		log.Printf("ws-handler: match.message confirmation dropped for slow sender %s", c.UserID)
+	}
+
+	// Deliver to peer via memory
+	c.Hub.direct <- &DirectMessage{TargetUserID: peerID, Data: outData}
 }
 
 // ══════════════════════════════════════════════════════════════

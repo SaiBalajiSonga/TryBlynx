@@ -364,15 +364,8 @@ func (w *Worker) finalizeMatch(a, b *MatchTicket) {
 	if _, err := pipe.Exec(ctx); err != nil {
 		log.Printf("matchmaker: failed to remove tickets for %s and %s: %v",
 			a.UserID, b.UserID, err)
-	}
-
-	// 2. Create a conversation for the matched pair
-	roomID, err := w.createMatchConversation(ctx, a.UserID, b.UserID)
-	if err != nil {
-		log.Printf("matchmaker: failed to create conversation for %s and %s: %v",
-			a.UserID, b.UserID, err)
-		return
-	}
+	// 2. Generate an ephemeral Room ID for the frontend UI grouping
+	roomID := uuid.New()
 
 	// 3. Notify both users
 	notification := matchFoundMessage{
@@ -393,34 +386,7 @@ func (w *Worker) finalizeMatch(a, b *MatchTicket) {
 	dataB, _ := json.Marshal(notification)
 	w.notifier.SendToUser(b.UserID, dataB)
 
-	log.Printf("matchmaker: ✓ matched %s ↔ %s (room: %s)", a.UserID, b.UserID, roomID)
-}
-
-// createMatchConversation creates a "random" type conversation
-// in PostgreSQL and adds both users as members.
-func (w *Worker) createMatchConversation(ctx context.Context, userA, userB uuid.UUID) (uuid.UUID, error) {
-	// Insert conversation
-	var convID uuid.UUID
-	err := w.store.Pool.QueryRow(ctx, `
-		INSERT INTO conversations (type, name)
-		VALUES ('random', '')
-		RETURNING id`,
-	).Scan(&convID)
-	if err != nil {
-		return uuid.Nil, err
-	}
-
-	// Add both users as members
-	_, err = w.store.Pool.Exec(ctx, `
-		INSERT INTO conversation_members (conversation_id, user_id)
-		VALUES ($1, $2), ($1, $3)`,
-		convID, userA, userB,
-	)
-	if err != nil {
-		return uuid.Nil, err
-	}
-
-	return convID, nil
+	log.Printf("matchmaker: ✓ matched %s ↔ %s (ephemeral room: %s)", a.UserID, b.UserID, roomID)
 }
 
 // ──────────────────────────────────────────────────────────────
