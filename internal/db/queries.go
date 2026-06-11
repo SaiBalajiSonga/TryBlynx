@@ -61,6 +61,7 @@ const userColumns = `
 	gender, location, language, interests,
 	is_vip, is_admin, is_moderator, is_developer, shadowbanned,
 	COALESCE(public_key, '') AS public_key,
+	COALESCE(encrypted_private_key, '') AS encrypted_private_key,
 	COALESCE(device_fingerprint, '') AS device_fingerprint,
 	COALESCE(strike_count, 0) AS strike_count,
 	banned_until,
@@ -77,7 +78,7 @@ func scanUser(row pgx.Row) (*models.User, error) {
 		&u.DisplayName, &u.AvatarURL, &u.Bio,
 		&u.Gender, &u.Location, &u.Language, &u.Interests,
 		&u.IsVIP, &u.IsAdmin, &u.IsModerator, &u.IsDeveloper, &u.Shadowbanned,
-		&u.PublicKey,
+		&u.PublicKey, &u.EncryptedPrivateKey,
 		&u.DeviceFingerprint, &u.StrikeCount, &u.BannedUntil,
 		&u.IsAnonymous, &u.ExpiresAt,
 		&u.CreatedAt, &u.UpdatedAt,
@@ -102,17 +103,19 @@ func scanUser(row pgx.Row) (*models.User, error) {
 //   - ctx:          Request context for cancellation/timeout.
 //   - username:     Unique username (3-32 characters).
 //   - email:        Unique email address (lowercased by caller).
-//   - passwordHash: bcrypt hash of the user's password.
+//   - passwordHash:        bcrypt hash of the user's password.
+//   - publicKey:           E2EE public key.
+//   - encryptedPrivateKey: E2EE private key encrypted with password-derived AES key.
 //
 // Returns:
 //   - *models.User: The newly created user with all default values populated.
 //   - error:        Non-nil on duplicate key violation or connection failure.
-func (s *Store) CreateUser(ctx context.Context, username, email, passwordHash string) (*models.User, error) {
+func (s *Store) CreateUser(ctx context.Context, username, email, passwordHash, publicKey, encryptedPrivateKey string) (*models.User, error) {
 	row := s.Pool.QueryRow(ctx, `
-		INSERT INTO users (username, email, password_hash)
-		VALUES ($1, $2, $3)
+		INSERT INTO users (username, email, password_hash, public_key, encrypted_private_key)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING `+userColumns,
-		username, email, passwordHash,
+		username, email, passwordHash, publicKey, encryptedPrivateKey,
 	)
 	return scanUser(row)
 }

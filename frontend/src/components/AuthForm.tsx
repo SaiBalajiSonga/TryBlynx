@@ -2,6 +2,11 @@ import React, { useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { Zap, Mail, Lock, User, AlertCircle, ArrowRight } from 'lucide-react';
 import { getDeviceFingerprint } from '../lib/fingerprint';
+import {
+  generateKeyPair, exportPublicKey, exportPrivateKeyToJwk,
+  deriveKeyFromPassword, encryptPrivateKey, decryptPrivateKey,
+  storePrivateKey
+} from '../lib/crypto';
 
 const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8080/api';
 
@@ -26,14 +31,56 @@ export function AuthForm() {
         ? JSON.stringify({ email, password, fingerprint })
         : JSON.stringify({ email, password, username, fingerprint });
 
+      let finalBody = body;
+      let jwkToStore: JsonWebKey | null = null;
+      let derivedKey: CryptoKey | null = null;
+
+      if (!isLogin) {
+        // REGISTER: Generate E2EE keys and encrypt private key with password
+        try {
+          const kp = await generateKeyPair();
+          const pub = await exportPublicKey(kp.publicKey);
+          const jwk = await exportPrivateKeyToJwk(kp.privateKey);
+          
+          const salt = username || email;
+          derivedKey = await deriveKeyFromPassword(password, salt);
+          const encPriv = await encryptPrivateKey(jwk, derivedKey);
+          
+          const parsedBody = JSON.parse(body);
+          parsedBody.public_key = pub;
+          parsedBody.encrypted_private_key = encPriv;
+          finalBody = JSON.stringify(parsedBody);
+          jwkToStore = jwk;
+        } catch (err) {
+          console.error('[E2EE] Setup failed during registration:', err);
+        }
+      }
+
       const res = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body,
+        body: finalBody,
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Authentication failed');
+
+      // Post-success logic
+      if (!isLogin && jwkToStore) {
+        // Store the newly generated key
+        storePrivateKey(data.user.id, jwkToStore);
+      } else if (isLogin && data.user.encrypted_private_key) {
+        // LOGIN: Decrypt the stored private key using the password
+        try {
+          const salt = data.user.username || data.user.email;
+          const aesKey = await deriveKeyFromPassword(password, salt);
+          const jwk = await decryptPrivateKey(data.user.encrypted_private_key, aesKey);
+          storePrivateKey(data.user.id, jwk);
+        } catch (err) {
+          console.error('[E2EE] Failed to decrypt private key. Wrong password or corrupted data?', err);
+        }
+      }
+
       setAuth(data.token, data.user);
     } catch (err: any) {
       setError(err.message);

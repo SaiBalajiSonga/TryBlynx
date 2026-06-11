@@ -29,10 +29,12 @@ import (
 
 // registerRequest is the expected JSON body for POST /api/register.
 type registerRequest struct {
-	Username    string `json:"username"`
-	Email       string `json:"email"`
-	Password    string `json:"password"`
-	Fingerprint string `json:"fingerprint"`
+	Username            string `json:"username"`
+	Email               string `json:"email"`
+	Password            string `json:"password"`
+	Fingerprint         string `json:"fingerprint"`
+	PublicKey           string `json:"public_key"`
+	EncryptedPrivateKey string `json:"encrypted_private_key"`
 }
 
 // loginRequest is the expected JSON body for POST /api/login.
@@ -124,7 +126,7 @@ func (s *Server) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Create user in database ──────────────────────────────
-	user, err := s.Store.CreateUser(r.Context(), req.Username, req.Email, string(hash))
+	user, err := s.Store.CreateUser(r.Context(), req.Username, req.Email, string(hash), req.PublicKey, req.EncryptedPrivateKey)
 	if err != nil {
 		// Handle race condition: another request inserted between check and insert
 		if strings.Contains(err.Error(), "duplicate key") {

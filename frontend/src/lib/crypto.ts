@@ -184,3 +184,57 @@ export function loadPrivateKey(userId: string): JsonWebKey | null {
   if (!raw) return null;
   try { return JSON.parse(raw); } catch { return null; }
 }
+
+// ── Password-Based Secure Storage ───────────────────────────────────────────
+
+export async function deriveKeyFromPassword(password: string, salt: string): Promise<CryptoKey> {
+  const enc = new TextEncoder();
+  const keyMaterial = await window.crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits', 'deriveKey']
+  );
+  return window.crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: enc.encode(salt),
+      iterations: 100000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    true, // Can export for testing, but typically false. Let's make it false for security.
+    ['encrypt', 'decrypt']
+  );
+}
+
+export async function encryptPrivateKey(jwk: JsonWebKey, aesKey: CryptoKey): Promise<string> {
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(JSON.stringify(jwk));
+  const ct = await window.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    aesKey,
+    plaintext
+  );
+  
+  return JSON.stringify({
+    iv: b64encode(iv.buffer),
+    ct: b64encode(ct)
+  });
+}
+
+export async function decryptPrivateKey(encryptedBlob: string, aesKey: CryptoKey): Promise<JsonWebKey> {
+  const data = JSON.parse(encryptedBlob);
+  const iv = b64decode(data.iv);
+  const ct = b64decode(data.ct);
+  
+  const pt = await window.crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as ArrayBuffer },
+    aesKey,
+    ct.buffer.slice(ct.byteOffset, ct.byteOffset + ct.byteLength) as ArrayBuffer
+  );
+  
+  return JSON.parse(new TextDecoder().decode(pt));
+}

@@ -45,6 +45,7 @@ type User struct {
 	IsModerator       bool       `json:"is_moderator"`
 	IsDeveloper       bool       `json:"is_developer"`
 	PublicKey         string     `json:"public_key"`
+	EncryptedPrivateKey string   `json:"encrypted_private_key,omitempty"` // E2EE Backup
 	Shadowbanned      bool       `json:"-"`
 	DeviceFingerprint string     `json:"-"`
 	StrikeCount       int        `json:"strike_count"`

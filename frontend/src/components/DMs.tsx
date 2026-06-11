@@ -44,8 +44,10 @@ export function DMs() {
     if (!user) return;
     const init = async () => {
       const existingPriv = loadPrivateKey(user.id);
-      if (user.public_key && existingPriv) {
-        // Keys already exist — ready
+      if (user.public_key) {
+        if (!existingPriv) {
+           console.warn('[E2EE] Public key exists but private key is missing from local storage. Cannot decrypt old messages.');
+        }
         setE2eeReady(true);
         return;
       }
