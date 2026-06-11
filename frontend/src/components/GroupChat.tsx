@@ -64,7 +64,7 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
         setGroups(gs);
         if (!id && gs.length > 0) {
           const def = gs.find((g: any) => g.name === 'General') || gs[0];
-          navigate(`/groups/${def.id}`, { replace: true });
+          navigate(`/app/groups/${def.id}`, { replace: true });
         }
       })
       .catch(err => console.error('Failed to load groups:', err))
@@ -208,7 +208,7 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
             : groups.map(g => {
               const isActive = g.id === id;
               return (
-                <button key={g.id} onClick={() => navigate(`/groups/${g.id}`)} style={{
+                <button key={g.id} onClick={() => navigate(`/app/groups/${g.id}`)} style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
                   padding: '8px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
                   background: isActive ? 'var(--blynx-750)' : 'transparent',
@@ -299,6 +299,9 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
                   // Group boundary detection
                   const isGroupStart = !prev || prev.sender_id !== msg.sender_id;
                   
+                  const sender = members.find(m => m.id === msg.sender_id);
+                  const avatarUrl = sender?.avatar_url;
+                  
                   return (
                     <Fragment key={msg.message_id}>
                       {isGroupStart && i > 0 && (
@@ -320,26 +323,32 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
                       }}
                     >
                       {/* Avatar column */}
-                      <div style={{ width: '56px', flexShrink: 0, marginRight: '16px', display: 'flex', justifyContent: 'center' }}>
+                      <div style={{ width: '40px', flexShrink: 0, marginRight: '16px', display: 'flex', justifyContent: 'center', marginTop: '2px' }}>
                         {isGroupStart ? (
                           <div 
                             onClick={() => onUserClick && msg.sender_id && onUserClick(msg.sender_id)}
                             style={{
-                            width: '48px', height: '48px', borderRadius: '50%',
+                            width: '40px', height: '40px', borderRadius: '50%',
                             background: 'var(--blynx-600)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'white', fontWeight: 600, fontSize: '18px',
-                            cursor: 'pointer'
+                            color: 'white', fontWeight: 600, fontSize: '16px',
+                            cursor: 'pointer',
+                            overflow: 'hidden'
                           }}>
-                            {(msg.sender_name || 'U').charAt(0).toUpperCase()}
+                            {avatarUrl ? (
+                              <img src={avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                              (msg.sender_name || 'U').charAt(0).toUpperCase()
+                            )}
                           </div>
                         ) : (
                           <div style={{ 
-                            width: '100%', textAlign: 'center', fontSize: '10px', 
+                            width: '100%', textAlign: 'right', fontSize: '10px', 
                             color: 'var(--text-muted)', 
                             opacity: hoveredMsgId === msg.message_id ? 1 : 0,
                             lineHeight: '22px', // align with first line of text
-                            whiteSpace: 'nowrap'
+                            whiteSpace: 'nowrap',
+                            paddingRight: '4px'
                           }}>
                             {new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                           </div>
@@ -565,7 +574,7 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
           onDelete={() => {
             setShowSettingsModal(false);
             fetchGroups();
-            navigate('/groups'); // Kick them out of the deleted group
+            navigate('/app/groups'); // Kick them out of the deleted group
           }}
         />
       )}

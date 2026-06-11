@@ -7,7 +7,7 @@ import { useLocation, useNavigate, Routes, Route, Navigate } from 'react-router-
 import {
   Menu, Bell, MessageSquare, Zap, Crown, LogOut, Settings,
   Home as HomeIcon, Video, Users, Search as SearchIcon, Shield, Star,
-  Terminal, ChevronLeft, ChevronRight, UserPlus, Check, X, UserCircle,
+  Terminal, UserPlus, Check, X, UserCircle,
   Clipboard, UserCheck,
 } from 'lucide-react';
 import { SettingsView } from './Settings';
@@ -21,6 +21,7 @@ import { UserProfileModal } from './UserProfileModal';
 import { ModLog } from './ModLog';
 import { useWebSocket } from '../lib/useWebSocket';
 import { api } from '../lib/api';
+import { ToastContainer } from './ToastContainer';
 
 function getSavedSidebarState(): boolean {
   try { return localStorage.getItem('sidebar_open') !== 'false'; } catch { return true; }
@@ -43,7 +44,12 @@ export function Dashboard() {
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
   // Fetch notifications on mount
-  useEffect(() => { fetchNotifications(); }, []);// eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { 
+    fetchNotifications(); 
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Real DM unread count
   const dmUnreadCounts = useChatStore(s => s.dmUnreadCounts);
@@ -63,14 +69,14 @@ export function Dashboard() {
   const isMod = user?.is_moderator || user?.is_admin || user?.is_developer;
 
   const navItems = [
-    { id: 'home',       path: '/',          icon: HomeIcon,      label: 'Home' },
-    { id: 'text-chat',  path: '/text-chat', icon: MessageSquare, label: 'Text Chat' },
-    { id: 'video-chat', path: '/video-chat', icon: Video,        label: 'Video Chat' },
-    { id: 'groups',     path: '/groups',    icon: Users,         label: 'Group Chat' },
-    { id: 'dms',        path: '/dms',       icon: MessageSquare, label: 'Direct Messages' },
-    { id: 'search',     path: '/search',    icon: SearchIcon,    label: 'Find Users' },
-    { id: 'settings',   path: '/settings',  icon: Settings,      label: 'Settings' },
-    ...(isMod ? [{ id: 'mod', path: '/mod', icon: Clipboard, label: 'Mod Log' }] : []),
+    { id: 'home',       path: '/app',          icon: HomeIcon,      label: 'Home' },
+    { id: 'text-chat',  path: '/app/text-chat', icon: MessageSquare, label: 'Text Chat' },
+    { id: 'video-chat', path: '/app/video-chat', icon: Video,        label: 'Video Chat' },
+    { id: 'groups',     path: '/app/groups',    icon: Users,         label: 'Group Chat' },
+    { id: 'dms',        path: '/app/dms',       icon: MessageSquare, label: 'Direct Messages' },
+    { id: 'search',     path: '/app/search',    icon: SearchIcon,    label: 'Find Users' },
+    { id: 'settings',   path: '/app/settings',  icon: Settings,      label: 'Settings' },
+    ...(isMod ? [{ id: 'mod', path: '/app/mod', icon: Clipboard, label: 'Mod Log' }] : []),
   ];
 
   useEffect(() => {
@@ -137,13 +143,7 @@ export function Dashboard() {
           <button onClick={toggleSidebar} style={navBtnStyle} title="Toggle sidebar">
             <Menu size={20} />
           </button>
-          <button onClick={() => navigate(-1)} style={navBtnStyle} title="Go back">
-            <ChevronLeft size={18} />
-          </button>
-          <button onClick={() => navigate(1)} style={navBtnStyle} title="Go forward">
-            <ChevronRight size={18} />
-          </button>
-          <div onClick={() => navigate('/')} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginLeft: '4px' }}>
+          <div onClick={() => navigate('/app')} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginLeft: '4px' }}>
             <div style={{ width: '28px', height: '28px', background: 'var(--accent)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 12px var(--accent-glow)', flexShrink: 0 }}>
               <Zap size={14} color="white" fill="white" />
             </div>
@@ -215,7 +215,7 @@ export function Dashboard() {
           </div>
 
           {/* DMs badge (real unread count) */}
-          <button id="dms-nav-btn" onClick={() => navigate('/dms')} style={{ ...navBtnStyle, position: 'relative' }}>
+          <button id="dms-nav-btn" onClick={() => navigate('/app/dms')} style={{ ...navBtnStyle, position: 'relative' }}>
             <MessageSquare size={19} />
             {totalDMUnread > 0 && (
               <span style={badgeStyle('var(--accent)')}>{totalDMUnread > 9 ? '9+' : totalDMUnread}</span>
@@ -228,7 +228,7 @@ export function Dashboard() {
               id="profile-menu-btn"
               onClick={() => setActiveDropdown(d => d === 'profile' ? null : 'profile')}
               style={{
-                width: '32px', height: '32px', borderRadius: '50%', border: '2px solid var(--border-bright)',
+                width: '32px', height: '32px', borderRadius: '50%', border: 'none',
                 cursor: 'pointer', padding: 0,
                 background: user?.is_vip ? 'linear-gradient(135deg, #faa61a, #ff6b35)' : 'linear-gradient(135deg, var(--accent), #7289da)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -256,8 +256,8 @@ export function Dashboard() {
                 <div style={{ padding: '6px' }}>
                   {[
                     { label: 'My Profile', icon: UserCircle, action: () => { setSelectedProfileId(user?.id ?? null); setActiveDropdown(null); } },
-                    { label: 'Settings',   icon: Settings,    action: () => { navigate('/settings');  setActiveDropdown(null); } },
-                    ...(isMod ? [{ label: 'Mod Dashboard', icon: Clipboard, action: () => { navigate('/mod'); setActiveDropdown(null); } }] : []),
+                    { label: 'Settings',   icon: Settings,    action: () => { navigate('/app/settings');  setActiveDropdown(null); } },
+                    ...(isMod ? [{ label: 'Mod Dashboard', icon: Clipboard, action: () => { navigate('/app/mod'); setActiveDropdown(null); } }] : []),
                     { label: 'Sign Out', icon: LogOut, action: clearAuth, danger: true },
                   ].map(({ label, icon: Icon, action, danger }: any) => (
                     <button key={label} onClick={action} style={{
@@ -297,7 +297,7 @@ export function Dashboard() {
           <nav style={{ padding: '12px 8px', flex: 1 }}>
             <p style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', padding: '4px 8px 6px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Menu</p>
             {navItems.map(({ id, path, icon: Icon, label }) => {
-              const isActive = id === 'home' ? location.pathname === '/' : location.pathname.startsWith('/' + id);
+              const isActive = id === 'home' ? location.pathname === '/app' || location.pathname === '/app/' : location.pathname.startsWith('/app/' + id);
               return (
                 <button
                   key={id}
@@ -349,7 +349,7 @@ export function Dashboard() {
 
         <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }} onClick={() => setActiveDropdown(null)}>
           <Routes>
-            <Route path="/"             element={<Home onNavigate={(p: string) => navigate(`/${p}`)} />} />
+            <Route path="/"             element={<Home onNavigate={(p: string) => navigate(`/app/${p}`)} />} />
             <Route path="/text-chat"    element={<TextChat />} />
             <Route path="/video-chat"   element={<VideoChat />} />
             <Route path="/groups"       element={<GroupChat onUserClick={setSelectedProfileId} />} />
@@ -367,6 +367,7 @@ export function Dashboard() {
       {selectedProfileId && (
         <UserProfileModal userId={selectedProfileId} onClose={() => setSelectedProfileId(null)} />
       )}
+      <ToastContainer />
     </div>
   );
 }

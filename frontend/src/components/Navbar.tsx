@@ -68,17 +68,18 @@ export function Navbar() {
         </button>
         <button onClick={() => setActivePanel('profile')} style={{
           width: '32px', height: '32px', borderRadius: '50%',
-          border: '2px solid var(--border-accent)',
+          border: 'none',
           background: 'var(--grad-accent)',
           color: 'white', fontWeight: 700, fontSize: '13px',
           cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
           transition: 'box-shadow 0.15s',
           fontFamily: 'Manrope, sans-serif',
+          overflow: 'hidden'
         }} title="Profile"
           onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 0 12px var(--accent-glow)')}
           onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
         >
-          {initials}
+          {user?.avatar_url ? <img src={user.avatar_url} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : initials}
         </button>
       </div>
     </nav>

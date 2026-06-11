@@ -89,7 +89,7 @@ export function Search() {
   const handleMessage = async (userId: string) => {
     try {
       const res = await api.startDM(userId);
-      navigate(`/dms/${res.conversation_id}`);
+      navigate(`/app/dms/${res.conversation_id}`);
     } catch (err: any) {
       if (err.message === 'not_friends') {
         alert('You need to be friends first to send a direct message.');

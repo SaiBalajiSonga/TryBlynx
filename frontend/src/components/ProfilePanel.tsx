@@ -24,7 +24,7 @@ export function ProfilePanel() {
     e.preventDefault();
     setSaving(true);
     try {
-      const payload = { display_name: displayName, bio, gender, location, language, interests };
+      const payload = { display_name: displayName, bio, gender, location, language, interests, public_key: user?.public_key || '' };
       await api.updateProfile(payload);
       updateUser(payload);
       setEditing(false);
@@ -56,12 +56,13 @@ export function ProfilePanel() {
           position: 'absolute', bottom: '-40px', left: '28px',
           width: '80px', height: '80px', borderRadius: '50%',
           background: user?.is_vip ? 'linear-gradient(135deg, #fbbf24, #fb923c)' : 'var(--grad-accent)',
-          border: '4px solid var(--bg-base)',
+          border: 'none',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: '28px', fontWeight: 800, color: 'white',
           boxShadow: '0 0 24px var(--accent-glow)',
+          overflow: 'hidden'
         }}>
-          {initials}
+          {user?.avatar_url ? <img src={user.avatar_url} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : initials}
         </div>
         {!editing && (
           <button onClick={() => setEditing(true)} className="btn btn-ghost" style={{

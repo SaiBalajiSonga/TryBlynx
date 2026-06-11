@@ -15,12 +15,15 @@ export function Sidebar() {
   const displayName = user?.display_name || user?.username || 'Anonymous';
   const initials = displayName.charAt(0).toUpperCase();
 
+  const dmUnreadCounts = useChatStore((s) => s.dmUnreadCounts);
+  const totalDmUnread = Object.values(dmUnreadCounts).reduce((a, b) => a + b, 0);
+
   const nav = [
     { id: 'home' as const, icon: Home, label: 'Home' },
     { id: 'chat' as const, icon: MessageSquare, label: 'Text Chat', badge: matchStatus === 'matched' ? 1 : 0 },
     { id: 'video' as const, icon: Video, label: 'Video Chat' },
     { id: 'group' as const, icon: Users, label: 'Group Chat' },
-    { id: 'dms' as const, icon: MessageSquare, label: 'Direct Messages' },
+    { id: 'dms' as const, icon: MessageSquare, label: 'Direct Messages', badge: totalDmUnread },
     { id: 'notifications' as const, icon: Bell, label: 'Notifications', badge: unread },
     { id: 'profile' as const, icon: User, label: 'My Profile' },
     { id: 'settings' as const, icon: Settings, label: 'Settings' },
@@ -69,9 +72,10 @@ export function Sidebar() {
               background: user?.is_vip ? 'linear-gradient(135deg, #fbbf24, #fb923c)' : 'var(--grad-accent)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontWeight: 700, color: 'white', fontSize: '18px',
-              border: '2px solid var(--border-accent)',
+              border: 'none',
+              overflow: 'hidden',
             }}>
-              {initials}
+              {user?.avatar_url ? <img src={user.avatar_url} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : initials}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

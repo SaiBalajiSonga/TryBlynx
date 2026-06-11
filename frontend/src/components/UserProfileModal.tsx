@@ -65,7 +65,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
     try {
       const res = await api.startDM(userId);
       onClose();
-      navigate(`/dms/${res.conversation_id}`);
+      navigate(`/app/dms/${res.conversation_id}`);
     } catch (err: any) {
       if (err.message === 'not_friends') {
         showFb('Add as friend first to message.');
@@ -90,8 +90,14 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
 
   if (isEditing) {
     return (
-      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: '600px', height: '80vh', background: 'var(--blynx-900)', borderRadius: '16px', overflow: 'hidden', position: 'relative' }}>
+      <div 
+        style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => setIsEditing(false)}
+      >
+        <div 
+          style={{ width: '600px', height: '80vh', background: 'var(--blynx-900)', borderRadius: '16px', overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}
+          onClick={(e) => e.stopPropagation()}
+        >
           <button onClick={() => setIsEditing(false)} style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: 'white', cursor: 'pointer', zIndex: 10 }}>
             <X size={24} />
           </button>

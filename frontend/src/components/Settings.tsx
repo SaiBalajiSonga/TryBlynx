@@ -59,7 +59,7 @@ export function SettingsView() {
     setError('');
 
     try {
-      const payload = { display_name: displayName, bio, gender, location, language, interests, avatar_url: avatarUrl };
+      const payload = { display_name: displayName, bio, gender, location, language, interests, avatar_url: avatarUrl, public_key: user?.public_key || '' };
       await api.updateProfile(payload);
       updateUser(payload);
       setSaved(true);

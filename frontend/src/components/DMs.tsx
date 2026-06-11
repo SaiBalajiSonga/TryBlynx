@@ -9,15 +9,24 @@ import {
   encryptMessage, decryptMessage, isEncrypted,
   storePrivateKey, loadPrivateKey,
 } from '../lib/crypto';
+import { getSendMessage } from '../lib/useWebSocket';
 
 // Stable fallback — prevents Zustand getSnapshot infinite loop
 const EMPTY_WS_MSGS: import('../store/chatStore').DMMessage[] = [];
 
 export function DMs() {
   const navigate = useNavigate();
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const user = useAuthStore(s => s.user);
   const updateUser = useAuthStore(s => s.updateUser);
+  const clearDMUnread = useChatStore((s) => s.clearDMUnread);
+
+  // Clear unread count when we visit the chat
+  useEffect(() => {
+    if (id) {
+      clearDMUnread(id);
+    }
+  }, [id, clearDMUnread]);
 
   const [dms, setDms] = useState<any[]>([]);
   const [loadingDms, setLoadingDms] = useState(true);
@@ -41,6 +50,11 @@ export function DMs() {
         return;
       }
       try {
+        if (!window.crypto || !window.crypto.subtle) {
+          console.error('[E2EE] window.crypto.subtle is unavailable. Are you using HTTP instead of HTTPS on a network IP? E2EE requires a secure context.');
+          setE2eeReady(true);
+          return;
+        }
         const kp = await generateKeyPair();
         const pub = await exportPublicKey(kp.publicKey);
         const priv = await exportPrivateKeyToJwk(kp.privateKey);
@@ -64,7 +78,7 @@ export function DMs() {
       .then(res => {
         const chats = res.conversations || [];
         setDms(chats);
-        if (!id && chats.length > 0) navigate(`/dms/${chats[0].id}`, { replace: true });
+        if (!id && chats.length > 0) navigate(`/app/dms/${chats[0].id}`, { replace: true });
       })
       .catch(err => console.error('[DMs] Failed to load list:', err))
       .finally(() => setLoadingDms(false));
@@ -112,6 +126,18 @@ export function DMs() {
     const latest = wsMessages[wsLen - 1];
     if (!latest || latest.conversation_id !== id) return;
 
+    // If we receive an encrypted message but our local state thinks the peer has no public key,
+    // they must have just generated one. Refetch the DM list to get it!
+    if (isEncrypted(latest.body)) {
+      setDms((currentDms) => {
+        const chat = currentDms.find(c => c.id === id);
+        if (chat && !chat.peer_public_key) {
+          api.getDMs().then(res => setDms(res.conversations || []));
+        }
+        return currentDms;
+      });
+    }
+
     setMessages(prev => {
       const mid = latest.message_id || (latest as any).id;
       if (prev.some(m => m.message_id === mid)) return prev; // already present
@@ -143,49 +169,32 @@ export function DMs() {
   // ── Step 5: Send message (encrypt if both keys available) ─────────────────
   const activeChat = dms.find(c => c.id === id);
 
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(async (e?: React.FormEvent | React.MouseEvent) => {
+    if (e) e.preventDefault();
     if (!newMessage.trim() || !id || !user || !activeChat) return;
+
     const text = newMessage.trim();
     setNewMessage('');
 
     // Try to encrypt; fall back to plaintext if either party has no pubkey
     let body = text;
-    let encrypted = false;
     const myPub = user.public_key;
     const peerPub = activeChat.peer_public_key;
 
     if (myPub && peerPub) {
       try {
         body = await encryptMessage(text, myPub, peerPub);
-        encrypted = true;
       } catch (err) {
         console.error('[E2EE] Encrypt failed, falling back to plaintext:', err);
         body = text;
       }
     }
 
-    // Optimistic insert
-    const tempId = 'temp_' + Date.now();
-    setMessages(prev => [...prev, {
-      message_id: tempId,
-      sender_id: user.id,
-      body: text, // always show plaintext locally
-      created_at: new Date().toISOString(),
-      _encrypted: encrypted,
-    }]);
-
-    try {
-      // Backend: POST /api/dm/send { recipient_id, body }
-      const msg = await api.sendDM(activeChat.peer_id, body);
-      const realId = msg.message_id || msg.id;
-      // Replace temp with real
-      setMessages(prev => prev.map(m =>
-        m.message_id === tempId ? { ...m, message_id: realId } : m
-      ));
-    } catch (err) {
-      console.error('[DMs] Send failed:', err);
-      // Remove optimistic message on failure
-      setMessages(prev => prev.filter(m => m.message_id !== tempId));
+    const sendMessage = getSendMessage();
+    if (sendMessage) {
+      sendMessage('dm.message', { recipient_id: activeChat.peer_id, body });
+    } else {
+      console.error('[DMs] WebSocket not connected');
     }
   }, [newMessage, id, user, activeChat]);
 
@@ -229,7 +238,7 @@ export function DMs() {
           ) : dms.map(chat => {
             const isActive = chat.id === id;
             return (
-              <div key={chat.id} onClick={() => navigate(`/dms/${chat.id}`)} style={{
+              <div key={chat.id} onClick={() => navigate(`/app/dms/${chat.id}`)} style={{
                 display: 'flex', alignItems: 'center', padding: '10px 14px', cursor: 'pointer',
                 borderBottom: '1px solid var(--border)',
                 background: isActive ? 'var(--blynx-750)' : 'transparent', transition: 'background 0.1s',
@@ -237,8 +246,8 @@ export function DMs() {
                 onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--blynx-800)'; }}
                 onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
               >
-                <div style={{ width: '38px', height: '38px', borderRadius: '50%', flexShrink: 0, marginRight: '10px', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '15px' }}>
-                  {(chat.peer_name || 'U').charAt(0).toUpperCase()}
+                <div style={{ width: '38px', height: '38px', borderRadius: '50%', flexShrink: 0, marginRight: '10px', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '15px', overflow: 'hidden' }}>
+                  {chat.peer_avatar ? <img src={chat.peer_avatar} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : (chat.peer_name || 'U').charAt(0).toUpperCase()}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
@@ -268,8 +277,8 @@ export function DMs() {
             {/* Header */}
             <div style={{ height: '52px', padding: '0 16px', borderBottom: '1px solid var(--border)', background: 'var(--blynx-850)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '13px' }}>
-                  {(activeChat.peer_name || 'U').charAt(0).toUpperCase()}
+                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '13px', overflow: 'hidden' }}>
+                  {activeChat.peer_avatar ? <img src={activeChat.peer_avatar} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : (activeChat.peer_name || 'U').charAt(0).toUpperCase()}
                 </div>
                 <span style={{ fontWeight: 700, fontSize: '14px', color: 'white' }}>{activeChat.peer_name}</span>
                 {/* E2EE status badge */}
@@ -292,12 +301,17 @@ export function DMs() {
             </div>
 
             {/* E2EE info banner — shown once at top of conversation */}
-            {isE2EE && (
+            {isE2EE ? (
               <div style={{ padding: '8px 16px', background: 'rgba(74,222,128,0.04)', borderBottom: '1px solid rgba(74,222,128,0.08)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'rgba(74,222,128,0.7)', flexShrink: 0 }}>
                 <Lock size={11} />
                 Messages are end-to-end encrypted. Only you and {activeChat.peer_name} can read them.
               </div>
-            )}
+            ) : (!window.crypto || !window.crypto.subtle) ? (
+              <div style={{ padding: '8px 16px', background: 'rgba(239,68,68,0.04)', borderBottom: '1px solid rgba(239,68,68,0.08)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'rgba(239,68,68,0.8)', flexShrink: 0 }}>
+                <Lock size={11} />
+                End-to-end encryption is disabled. TryBlynx is running in an insecure context (HTTP). Please access via HTTPS or localhost.
+              </div>
+            ) : null}
 
             {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column' }}>
@@ -307,8 +321,8 @@ export function DMs() {
                 </div>
               ) : messages.length === 0 ? (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-                  <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: '20px' }}>
-                    {(activeChat.peer_name || 'U').charAt(0).toUpperCase()}
+                  <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: '20px', overflow: 'hidden' }}>
+                    {activeChat.peer_avatar ? <img src={activeChat.peer_avatar} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : (activeChat.peer_name || 'U').charAt(0).toUpperCase()}
                   </div>
                   <p style={{ color: 'white', fontWeight: 600, margin: 0, fontSize: '15px' }}>{activeChat.peer_name}</p>
                   <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: 0 }}>This is the start of your conversation.</p>
@@ -327,32 +341,32 @@ export function DMs() {
                   const isGroupStart = !prev || prev.sender_id !== msg.sender_id;
                   const isGroupEnd   = !next || next.sender_id !== msg.sender_id;
                   const isSolo       = isGroupStart && isGroupEnd;
-                  const r = '18px', s = '4px';
+                  const r = '22px', s = '4px';
                   let borderRadius: string;
                   if (isMe) {
-                    if (isSolo)            borderRadius = `${r} ${r} ${r} ${r}`;
-                    else if (isGroupStart) borderRadius = `${r} ${r} ${s} ${r}`;
-                    else if (isGroupEnd)   borderRadius = `${r} ${r} ${r} ${s}`;
-                    else                   borderRadius = `${r} ${r} ${s} ${s}`;
+                    if (isSolo)             borderRadius = `${r} ${r} ${r} ${r}`;
+                    else if (isGroupStart)  borderRadius = `${r} ${r} ${s} ${r}`;
+                    else if (isGroupEnd)    borderRadius = `${r} ${s} ${r} ${r}`;
+                    else                    borderRadius = `${r} ${s} ${s} ${r}`;
                   } else {
-                    if (isSolo)            borderRadius = `${r} ${r} ${r} ${r}`;
-                    else if (isGroupStart) borderRadius = `${r} ${r} ${r} ${s}`;
-                    else if (isGroupEnd)   borderRadius = `${r} ${r} ${s} ${r}`;
-                    else                   borderRadius = `${r} ${r} ${s} ${s}`;
+                    if (isSolo)             borderRadius = `${r} ${r} ${r} ${r}`;
+                    else if (isGroupStart)  borderRadius = `${r} ${r} ${r} ${s}`;
+                    else if (isGroupEnd)    borderRadius = `${s} ${r} ${r} ${r}`;
+                    else                    borderRadius = `${s} ${r} ${r} ${s}`;
                   }
                   return (
-                    <div key={msg.message_id} style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: '8px', marginTop: isGroupStart ? '12px' : '2px', justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                    <div key={msg.message_id} style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: '8px', marginTop: isGroupStart ? '12px' : '2px' }}>
                       {!isMe && (
-                        <div style={{ width: '28px', flexShrink: 0, alignSelf: 'flex-end', marginBottom: '2px' }}>
+                        <div style={{ width: '28px', flexShrink: 0, alignSelf: 'flex-end', marginBottom: isGroupEnd ? '18px' : '2px' }}>
                           {isGroupEnd ? (
-                            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: 'white' }}>
-                              {(activeChat.peer_name || 'U').charAt(0).toUpperCase()}
+                            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '15px', overflow: 'hidden' }}>
+                              {activeChat.peer_avatar ? <img src={activeChat.peer_avatar} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : (activeChat.peer_name || 'U').charAt(0).toUpperCase()}
                             </div>
                           ) : <div style={{ width: '28px' }} />}
                         </div>
                       )}
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '70%' }}>
-                        <div style={{ padding: '9px 14px', borderRadius, background: isMe ? 'linear-gradient(135deg, var(--accent) 0%, #7289da 100%)' : 'var(--blynx-750)', color: 'white', fontSize: '14px', lineHeight: 1.45, border: isMe ? 'none' : '1px solid var(--border)', wordBreak: 'break-word', boxShadow: isMe ? '0 2px 8px rgba(88,101,242,0.2)' : 'none' }}>
+                        <div style={{ padding: '9px 14px', borderRadius, background: isMe ? 'linear-gradient(135deg, var(--accent) 0%, #7289da 100%)' : 'var(--blynx-750)', color: 'white', fontSize: '14px', lineHeight: 1.45, border: 'none', wordBreak: 'break-word', boxShadow: isMe ? '0 2px 8px rgba(88,101,242,0.2)' : 'none' }}>
                           {msg.body}
                         </div>
                         {isGroupEnd && (
