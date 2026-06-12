@@ -112,3 +112,8 @@ export const api = {
   createCheckout: () =>
     fetchWithAuth('/checkout', { method: 'POST' }),
 };
+
+// Key backup endpoints (passphrase-encrypted private key blob)
+export const saveKeyBackup = (blob: string) =>
+  fetchWithAuth('/key-backup', { method: 'PUT', body: JSON.stringify({ blob }) });
+export const getKeyBackup = () => fetchWithAuth('/key-backup');

@@ -238,3 +238,73 @@ export async function decryptPrivateKey(encryptedBlob: string, aesKey: CryptoKey
   
   return JSON.parse(new TextDecoder().decode(pt));
 }
+
+// ── Passphrase-based key backup ───────────────────────────────────────────────
+// PBKDF2 derives an AES-256 key from passphrase+salt (100k iterations).
+// The RSA private key JWK is encrypted with that key (AES-GCM).
+// Server stores the opaque blob — cannot decrypt without the passphrase.
+
+export interface KeyBackupBlob {
+  v: 2;
+  salt: string; // base64, 16 bytes
+  iv: string;   // base64, 12 bytes
+  ct: string;   // base64, encrypted JWK
+}
+
+async function deriveKeyFromPassphrase(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+  const baseKey = await window.crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(passphrase), { name: 'PBKDF2' }, false, ['deriveKey']
+  );
+  return window.crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: salt as BufferSource, iterations: 100_000, hash: 'SHA-256' },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false, ['encrypt', 'decrypt'],
+  );
+}
+
+export async function encryptPrivateKeyWithPassphrase(privKeyJwk: JsonWebKey, passphrase: string): Promise<string> {
+  const salt = window.crypto.getRandomValues(new Uint8Array(16));
+  const iv   = window.crypto.getRandomValues(new Uint8Array(12));
+  const aesKey = await deriveKeyFromPassphrase(passphrase, salt);
+  const ct = await window.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    aesKey,
+    new TextEncoder().encode(JSON.stringify(privKeyJwk)),
+  );
+  const blob: KeyBackupBlob = {
+    v: 2,
+    salt: btoa(String.fromCharCode(...salt)),
+    iv:   btoa(String.fromCharCode(...iv)),
+    ct:   btoa(String.fromCharCode(...new Uint8Array(ct))),
+  };
+  return JSON.stringify(blob);
+}
+
+export async function decryptPrivateKeyWithPassphrase(blobStr: string, passphrase: string): Promise<JsonWebKey> {
+  const blob: KeyBackupBlob = JSON.parse(blobStr);
+  if (blob.v !== 2) throw new Error('Unknown backup version');
+  const b64 = (s: string) => { const b = atob(s); const a = new Uint8Array(b.length); for (let i=0;i<b.length;i++) a[i]=b.charCodeAt(i); return a; };
+  const salt = b64(blob.salt), iv = b64(blob.iv), ct = b64(blob.ct);
+  const aesKey = await deriveKeyFromPassphrase(passphrase, salt);
+  let plain: ArrayBuffer;
+  try {
+    plain = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as ArrayBuffer },
+      aesKey,
+      ct.buffer.slice(ct.byteOffset, ct.byteOffset + ct.byteLength) as ArrayBuffer,
+    );
+  } catch { throw new Error('Incorrect passphrase'); }
+  return JSON.parse(new TextDecoder().decode(plain)) as JsonWebKey;
+}
+
+export function passphraseStrength(p: string): { score: 0|1|2|3|4; label: string; color: string } {
+  if (!p.length) return { score: 0, label: '', color: '' };
+  let s = 0;
+  if (p.length >= 8)  s++;
+  if (p.length >= 14) s++;
+  if (/[A-Z]/.test(p) && /[a-z]/.test(p)) s++;
+  if (/[0-9!@#$%^&*]/.test(p)) s++;
+  const m: [string,string][] = [['Too short','#f87171'],['Weak','#fb923c'],['Fair','#fbbf24'],['Good','#4ade80'],['Strong','#22d3ee']];
+  return { score: s as 0|1|2|3|4, label: m[s][0], color: m[s][1] };
+}

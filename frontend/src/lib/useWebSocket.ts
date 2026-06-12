@@ -45,7 +45,7 @@ export function useWebSocket() {
             (async () => {
               let bodyText = data.payload.body;
               if (isEncrypted(bodyText)) {
-                const privJwk = loadPrivateKey(myId);
+                const privJwk = myId ? loadPrivateKey(myId) : null;
                 if (privJwk) {
                   try {
                     // decryptMessage takes (ciphertext, privJwk, isSender)
