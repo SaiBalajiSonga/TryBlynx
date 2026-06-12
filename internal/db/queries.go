@@ -943,9 +943,26 @@ func (s *Store) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 // ══════════════════════════════════════════════════════════════
 
 // SendFriendRequest creates a pending friendship from requester → addressee.
+// Returns an error if any blocked relationship exists in either direction.
 func (s *Store) SendFriendRequest(ctx context.Context, requesterID, addresseeID uuid.UUID) (*models.Friendship, error) {
-	var f models.Friendship
+	// Pre-check: reject if either party has blocked the other
+	var existingStatus string
 	err := s.Pool.QueryRow(ctx, `
+		SELECT status FROM friendships
+		WHERE (requester_id = $1 AND addressee_id = $2)
+		   OR (requester_id = $2 AND addressee_id = $1)
+		LIMIT 1`,
+		requesterID, addresseeID,
+	).Scan(&existingStatus)
+	if err != nil && err != pgx.ErrNoRows {
+		return nil, fmt.Errorf("db: send friend request pre-check: %w", err)
+	}
+	if existingStatus == "blocked" {
+		return nil, fmt.Errorf("db: blocked relationship exists")
+	}
+
+	var f models.Friendship
+	err = s.Pool.QueryRow(ctx, `
 		INSERT INTO friendships (requester_id, addressee_id, status)
 		VALUES ($1, $2, 'pending')
 		RETURNING id, requester_id, addressee_id, status, created_at, updated_at`,
@@ -986,6 +1003,22 @@ func (s *Store) DeclineFriendRequest(ctx context.Context, requesterID, addressee
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("db: friend request not found")
+	}
+	return nil
+}
+
+// CancelFriendRequest deletes a pending friendship sent by the requester (outgoing cancel).
+func (s *Store) CancelFriendRequest(ctx context.Context, requesterID, addresseeID uuid.UUID) error {
+	tag, err := s.Pool.Exec(ctx, `
+		DELETE FROM friendships
+		WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'`,
+		requesterID, addresseeID,
+	)
+	if err != nil {
+		return fmt.Errorf("db: cancel friend request: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("db: friend request not found or already processed")
 	}
 	return nil
 }

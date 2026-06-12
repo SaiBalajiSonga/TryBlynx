@@ -167,6 +167,10 @@ func (s *Server) SendFriendRequestHandler(w http.ResponseWriter, r *http.Request
 
 	friendship, err := s.Store.SendFriendRequest(r.Context(), callerID, targetID)
 	if err != nil {
+		if strings.Contains(err.Error(), "blocked relationship exists") {
+			respondError(w, http.StatusForbidden, "cannot send a friend request: a block relationship exists")
+			return
+		}
 		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique") {
 			respondError(w, http.StatusConflict, "friend request already sent or relationship exists")
 			return
@@ -264,6 +268,26 @@ func (s *Server) RemoveFriendHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// CancelFriendRequestHandler handles DELETE /api/friends/request/{userId}.
+// Cancels an outgoing pending friend request sent by the caller.
+func (s *Server) CancelFriendRequestHandler(w http.ResponseWriter, r *http.Request) {
+	callerID := auth.UserIDFromContext(r.Context())
+	targetIDStr := chi.URLParam(r, "userId")
+	targetID, err := uuid.Parse(targetIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	// callerID is the requester; targetID is the addressee
+	if err := s.Store.CancelFriendRequest(r.Context(), callerID, targetID); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to cancel friend request")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
 
 // ListFriendsHandler handles GET /api/friends.

@@ -84,6 +84,9 @@ export const api = {
     fetchWithAuth('/friends/accept', { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
   declineFriendRequest: (userId: string) =>
     fetchWithAuth('/friends/decline', { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
+  /** Cancel an *outgoing* pending friend request that the caller sent. */
+  cancelFriendRequest: (userId: string) =>
+    fetchWithAuth(`/friends/request/${userId}`, { method: 'DELETE' }),
   removeFriend: (userId: string) =>
     fetchWithAuth(`/friends/${userId}`, { method: 'DELETE' }),
 

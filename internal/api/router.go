@@ -133,6 +133,7 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 		r.Post("/api/friends/request", s.SendFriendRequestHandler)
 		r.Post("/api/friends/accept", s.AcceptFriendRequestHandler)
 		r.Post("/api/friends/decline", s.DeclineFriendRequestHandler)
+		r.Delete("/api/friends/request/{userId}", s.CancelFriendRequestHandler)
 		r.Delete("/api/friends/{userId}", s.RemoveFriendHandler)
 
 		// Notifications

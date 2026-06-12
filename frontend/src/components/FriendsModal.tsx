@@ -87,6 +87,16 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
     } catch {}
   };
 
+  // Cancel an *outgoing* friend request (caller is the requester, not the addressee)
+  const handleCancel = async (peerId: string) => {
+    try {
+      await api.cancelFriendRequest(peerId);
+      setRequests(prev => prev.filter(r => !(r.requester_id === user?.id && r.addressee_id === peerId) && r.peer_id !== peerId));
+    } catch (err: any) {
+      alert(err.message || 'Failed to cancel request');
+    }
+  };
+
   const handleSendRequest = async (userId: string) => {
     try {
       await api.sendFriendRequest(userId);
@@ -167,7 +177,7 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
               return (
                 <UserRow key={r.id} u={{ id: peerId, display_name: r.peer_name, username: r.peer_username, avatar_url: r.peer_avatar }}>
                   {isOutgoing ? (
-                    <button onClick={() => handleDecline(peerId)} style={outlineStyle}><X size={14} /> Cancel</button>
+                    <button onClick={() => handleCancel(peerId)} style={outlineStyle}><X size={14} /> Cancel</button>
                   ) : (
                     <>
                       <button onClick={() => handleAccept(peerId)} style={btnStyle('#57f287')}><UserCheck size={14} /> Accept</button>
