@@ -3,10 +3,13 @@ import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import { Save, Plus, X, User, Sliders, CheckCircle, Upload } from 'lucide-react';
 import { processAndModerateAvatar } from '../lib/moderation';
+import React from 'react';
+import { KeyBackupModal } from './KeyBackupModal';
 
 export function SettingsView() {
   const { user, updateUser } = useAuthStore();
   const [displayName, setDisplayName] = useState(user?.display_name || '');
+  const [showKeyBackup, setShowKeyBackup] = useState(false);
   const [bio, setBio] = useState(user?.bio || '');
   const [gender, setGender] = useState(user?.gender || '');
   const [interests, setInterests] = useState<string[]>(user?.interests || []);
@@ -87,6 +90,7 @@ export function SettingsView() {
   );
 
   return (
+    <>
     <div style={{ flex: 1, overflowY: 'auto', background: 'var(--blynx-900)' }}>
       {/* Header */}
       <div style={{
@@ -271,8 +275,7 @@ export function SettingsView() {
         </form>
       </div>
     </div>
+    {showKeyBackup && <KeyBackupModal onClose={() => setShowKeyBackup(false)} />}
+    </>
   );
 }
-
-// Need React for createElement
-import React from 'react';
