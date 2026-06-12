@@ -32,6 +32,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -392,15 +393,27 @@ func (h *Hub) handleRedisMessage(msg *redis.Message) {
 func (h *Hub) removeClientFromAllRooms(client *Client) {
 	for roomID, clients := range h.rooms {
 		if _, ok := clients[client]; ok {
-			// Broadcast peer_left before removing
-			outbound := OutboundMessage{
-				Type: "chat.peer_left",
-				Payload: map[string]string{
-					"peer_id": client.UserID.String(),
-				},
+			// Remove from Redis live presence tracking first if it's a chat room
+			if strings.HasPrefix(roomID, "chat:room:") {
+				rawRoomID := strings.TrimPrefix(roomID, "chat:room:")
+				count, err := h.Store.RemoveRoomPresence(context.Background(), rawRoomID, client.UserID)
+				if err != nil {
+					log.Printf("ws-hub: failed to remove room presence on disconnect: %v", err)
+				}
+
+				if count <= 0 {
+					// Broadcast peer_left before removing
+					outbound := OutboundMessage{
+						Type: "chat.peer_left",
+						Payload: map[string]string{
+							"peer_id": client.UserID.String(),
+							"room_id": rawRoomID,
+						},
+					}
+					outData, _ := json.Marshal(outbound)
+					h.RDB.Publish(h.ctx, roomID, outData)
+				}
 			}
-			outData, _ := json.Marshal(outbound)
-			h.RDB.Publish(h.ctx, roomID, outData)
 
 			delete(clients, client)
 			if len(clients) == 0 {

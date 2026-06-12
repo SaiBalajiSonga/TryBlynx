@@ -24,7 +24,7 @@ async function getIceServers(): Promise<RTCIceServer[]> {
   return PUBLIC_ICE_SERVERS;
 }
 
-export function useWebRTC(peerId: string | null) {
+export function useWebRTC(peerId: string | null, isInitiator: boolean = false) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const peerConnection = useRef<RTCPeerConnection | null>(null);
@@ -35,6 +35,7 @@ export function useWebRTC(peerId: string | null) {
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<RTCPeerConnectionState>('new');
+  const [isReady, setIsReady] = useState(false);
 
   // FIX: Use consumeSignalsForPeer to not consume signals meant for other peers
   const consumeSignalsForPeer = useWebRTCStore((s) => s.consumeSignalsForPeer);
@@ -44,14 +45,28 @@ export function useWebRTC(peerId: string | null) {
     if (!peerId) return;
     try {
       const iceServers = await getIceServers();
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      localStream.current = stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      
+      let stream: MediaStream | null = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localStream.current = stream;
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      } catch (err) {
+        console.warn('Media access denied, joining as viewer-only:', err);
+        setIsVideoOff(true);
+        setIsMuted(true);
+      }
 
       const pc = new RTCPeerConnection({ iceServers });
       peerConnection.current = pc;
 
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      if (stream) {
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      } else {
+        // Ensure we can still receive if we didn't add any tracks
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+        pc.addTransceiver('video', { direction: 'recvonly' });
+      }
 
       pc.ontrack = (event) => {
         if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
@@ -73,7 +88,6 @@ export function useWebRTC(peerId: string | null) {
 
       pc.oniceconnectionstatechange = () => {
         if (pc.iceConnectionState === 'disconnected') {
-          // Give it a moment before closing
           setTimeout(() => {
             if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
               pc.restartIce();
@@ -81,11 +95,21 @@ export function useWebRTC(peerId: string | null) {
           }, 2000);
         }
       };
+
+      if (isInitiator) {
+        // Automatically initiate call once setup is fully complete
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        const send = getSendMessage();
+        send?.('webrtc.offer', { peer_id: peerId, sdp: pc.localDescription });
+      }
+
+      setIsReady(true);
     } catch (err: any) {
-      console.error('Error accessing media devices:', err);
-      setError('Camera/Microphone access denied or unavailable.');
+      console.error('Fatal WebRTC init error:', err);
+      setError('Failed to initialize connection.');
     }
-  }, [peerId]);
+  }, [peerId, isInitiator]);
 
   useEffect(() => {
     initWebRTC();
@@ -96,9 +120,11 @@ export function useWebRTC(peerId: string | null) {
     };
   }, [initWebRTC]);
 
+  const earlyCandidates = useRef<any[]>([]);
+
   // FIX: Process only signals for this peer, don't blindly clear all signals
   useEffect(() => {
-    if (!peerConnection.current || !peerId || incomingSignals.length === 0) return;
+    if (!isReady || !peerConnection.current || !peerId || incomingSignals.length === 0) return;
     if (processingRef.current) return;
 
     const signals = consumeSignalsForPeer(peerId);
@@ -112,16 +138,26 @@ export function useWebRTC(peerId: string | null) {
         try {
           if (signal.type === 'offer' && signal.sdp) {
             await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            for (const cand of earlyCandidates.current) {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            }
+            earlyCandidates.current = [];
+            
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             const send = getSendMessage();
             send?.('webrtc.answer', { peer_id: peerId, sdp: pc.localDescription });
           } else if (signal.type === 'answer' && signal.sdp) {
             await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            for (const cand of earlyCandidates.current) {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            }
+            earlyCandidates.current = [];
           } else if (signal.type === 'ice' && signal.candidate) {
-            // FIX: Don't add ICE candidates before remote description is set
             if (pc.remoteDescription) {
               await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            } else {
+              earlyCandidates.current.push(signal.candidate);
             }
           }
         } catch (err) {
@@ -130,19 +166,9 @@ export function useWebRTC(peerId: string | null) {
       }
       processingRef.current = false;
     })();
-  }, [incomingSignals, peerId, consumeSignalsForPeer]);
+  }, [incomingSignals, peerId, consumeSignalsForPeer, isReady]);
 
-  const initiateCall = useCallback(async () => {
-    if (!peerConnection.current || !peerId) return;
-    try {
-      const offer = await peerConnection.current.createOffer();
-      await peerConnection.current.setLocalDescription(offer);
-      const send = getSendMessage();
-      send?.('webrtc.offer', { peer_id: peerId, sdp: peerConnection.current.localDescription });
-    } catch (err) {
-      console.error('Error creating offer', err);
-    }
-  }, [peerId]);
+  // initiateCall removed as it is handled internally
 
   const toggleMute = useCallback(() => {
     if (!localStream.current) return;
@@ -171,6 +197,5 @@ export function useWebRTC(peerId: string | null) {
     connectionState,
     toggleMute,
     toggleVideo,
-    initiateCall,
   };
 }

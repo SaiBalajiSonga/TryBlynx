@@ -22,25 +22,25 @@ func (s *Store) AddRoomPresence(ctx context.Context, roomID string, userID uuid.
 }
 
 // RemoveRoomPresence decrements the presence connection count. If it reaches 0 or less, the user is removed from presence.
-func (s *Store) RemoveRoomPresence(ctx context.Context, roomID string, userID uuid.UUID) error {
+func (s *Store) RemoveRoomPresence(ctx context.Context, roomID string, userID uuid.UUID) (int64, error) {
 	key := "chat:presence:" + roomID
 	field := userID.String()
 
 	// Decrement the connection count
 	count, err := s.Redis.HIncrBy(ctx, key, field, -1).Result()
 	if err != nil {
-		return fmt.Errorf("redis: failed to decrement room presence: %w", err)
+		return 0, fmt.Errorf("redis: failed to decrement room presence: %w", err)
 	}
 
 	// If count drops to 0 or below (e.g. all tabs closed), remove the user from the presence hash entirely
 	if count <= 0 {
 		_, err = s.Redis.HDel(ctx, key, field).Result()
 		if err != nil {
-			return fmt.Errorf("redis: failed to delete room presence field: %w", err)
+			return 0, fmt.Errorf("redis: failed to delete room presence field: %w", err)
 		}
 	}
 
-	return nil
+	return count, nil
 }
 
 // GetRoomPresenceCount returns the number of unique active users in the room.

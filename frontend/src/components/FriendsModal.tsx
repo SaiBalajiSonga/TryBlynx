@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, UserPlus, MessageSquare, Loader, UserX, UserCheck, Search as SearchIcon } from 'lucide-react';
 import { api } from '../lib/api';
+import { useNotificationStore } from '../store/notificationStore';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 
@@ -10,6 +11,7 @@ interface FriendsModalProps {
 
 export function FriendsModal({ onClose }: FriendsModalProps) {
   const user = useAuthStore(s => s.user);
+  const pendingFriendsCount = useNotificationStore(s => s.pendingFriendsCount);
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'add'>('all');
   
   const [friends, setFriends] = useState<any[]>([]);
@@ -29,8 +31,11 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
         .finally(() => setLoading(false));
     } else if (activeTab === 'pending') {
       api.getFriendRequests()
-        .then(res => setRequests(res.requests || []))
-        .catch(err => console.error(err))
+        .then(res => {
+          setRequests(res.requests || []);
+          useNotificationStore.getState().fetchPendingFriendsCount();
+        })
+        .catch(console.error)
         .finally(() => setLoading(false));
     } else {
       setLoading(false);
@@ -76,14 +81,20 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
   const handleAccept = async (userId: string) => {
     try {
       await api.acceptFriendRequest(userId);
-      setRequests(prev => prev.filter(r => r.requester_id !== userId));
+      api.getFriendRequests().then(res => {
+        setRequests(res.requests || []);
+        useNotificationStore.getState().fetchPendingFriendsCount();
+      });
     } catch {}
   };
 
   const handleDecline = async (userId: string) => {
     try {
       await api.declineFriendRequest(userId);
-      setRequests(prev => prev.filter(r => r.requester_id !== userId));
+      api.getFriendRequests().then(res => {
+        setRequests(res.requests || []);
+        useNotificationStore.getState().fetchPendingFriendsCount();
+      });
     } catch {}
   };
 
@@ -91,7 +102,10 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
   const handleCancel = async (peerId: string) => {
     try {
       await api.cancelFriendRequest(peerId);
-      setRequests(prev => prev.filter(r => !(r.requester_id === user?.id && r.addressee_id === peerId) && r.peer_id !== peerId));
+      api.getFriendRequests().then(res => {
+        setRequests(res.requests || []);
+        useNotificationStore.getState().fetchPendingFriendsCount();
+      });
     } catch (err: any) {
       alert(err.message || 'Failed to cancel request');
     }
@@ -125,18 +139,45 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
               <X size={20} />
             </button>
           </div>
-          <div style={{ display: 'flex', gap: '20px' }}>
-            {(['all', 'pending', 'add'] as const).map(tab => (
+          <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+            {(['all', 'pending'] as const).map(tab => (
               <button key={tab} onClick={() => setActiveTab(tab)} style={{
                 background: 'none', border: 'none', cursor: 'pointer',
                 padding: '0 0 12px 0', fontSize: '14px', fontWeight: 600,
                 color: activeTab === tab ? 'white' : 'var(--text-muted)',
                 borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
-                transition: 'all 0.15s', whiteSpace: 'nowrap'
+                transition: 'all 0.15s', whiteSpace: 'nowrap',
+                display: 'flex', alignItems: 'center', gap: '6px'
               }}>
-                {tab === 'all' ? 'All Friends' : tab === 'pending' ? 'Pending' : 'Add Friend'}
+                {tab === 'all' ? 'All Friends' : 'Pending'}
+                {tab === 'pending' && pendingFriendsCount > 0 && (
+                  <span style={{
+                    background: '#ed4245', color: 'white', fontSize: '11px', fontWeight: 700,
+                    padding: '2px 6px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}>
+                    {pendingFriendsCount > 9 ? '9+' : pendingFriendsCount}
+                  </span>
+                )}
               </button>
             ))}
+            <button 
+              onClick={() => setActiveTab('add')} 
+              style={{
+                marginLeft: 'auto',
+                background: activeTab === 'add' ? 'transparent' : 'var(--accent)',
+                color: activeTab === 'add' ? 'var(--accent)' : 'white',
+                border: 'none',
+                padding: '4px 10px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                marginBottom: '12px',
+                transition: 'all 0.15s'
+              }}
+            >
+              Add Friend
+            </button>
           </div>
         </div>
 

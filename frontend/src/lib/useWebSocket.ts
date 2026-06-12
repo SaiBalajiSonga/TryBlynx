@@ -111,6 +111,13 @@ export function useWebSocket() {
         if (n) addNotification(n);
         break;
       }
+      case 'friend_request_received':
+        useNotificationStore.getState().incrementPendingFriends();
+        break;
+      case 'friend_request_handled':
+        // When someone accepts/declines our request, our pending count should decrease
+        useNotificationStore.getState().decrementPendingFriends();
+        break;
       case 'error':
         console.error('WS server error:', data.payload?.message);
         break;

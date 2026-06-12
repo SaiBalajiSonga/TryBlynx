@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────
 import { create } from 'zustand';
 import { api } from '../lib/api';
+import { useAuthStore } from './authStore';
 
 export interface AppNotification {
   id: string;
@@ -25,6 +26,12 @@ interface NotificationState {
   markAllRead: () => Promise<void>;
   addNotification: (n: AppNotification) => void;
   setUnreadCount: (count: number) => void;
+  pendingFriendsCount: number;
+  unseenPendingFriends: boolean;
+  fetchPendingFriendsCount: () => Promise<void>;
+  incrementPendingFriends: () => void;
+  decrementPendingFriends: () => void;
+  markPendingFriendsSeen: () => void;
 }
 
 export const useNotificationStore = create<NotificationState>((set) => ({
@@ -68,4 +75,27 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   },
 
   setUnreadCount: (count: number) => set({ unreadCount: count }),
+
+  pendingFriendsCount: 0,
+  unseenPendingFriends: false,
+  fetchPendingFriendsCount: async () => {
+    try {
+      const data = await api.getFriendRequests();
+      // count only incoming requests
+      const user = useAuthStore.getState().user;
+      const incoming = (data.requests || []).filter((r: any) => r.addressee_id === user?.id);
+      set({ 
+        pendingFriendsCount: incoming.length,
+        unseenPendingFriends: incoming.length > 0
+      });
+    } catch {}
+  },
+  incrementPendingFriends: () => set(state => ({ 
+    pendingFriendsCount: state.pendingFriendsCount + 1,
+    unseenPendingFriends: true
+  })),
+  decrementPendingFriends: () => set(state => ({ 
+    pendingFriendsCount: Math.max(0, state.pendingFriendsCount - 1) 
+  })),
+  markPendingFriendsSeen: () => set({ unseenPendingFriends: false }),
 }));

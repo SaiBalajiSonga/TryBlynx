@@ -179,17 +179,12 @@ func (s *Server) SendFriendRequestHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Create notification for recipient
-	callerActorID := callerID
-	notif, _ := s.Store.CreateNotificationRaw(
-		r.Context(), targetID, "friend_request", &callerActorID,
-		fmt.Sprintf(`{"friendship_id":"%s"}`, friendship.ID),
-	)
 
-	// Push WS notification to recipient (if online)
-	if notif != nil && s.Hub != nil {
-		s.pushNotification(targetID, notif)
-	}
+	// Push WS event to update recipient's pending badge
+	s.pushWSEvent(targetID, "friend_request_received", map[string]interface{}{
+		"friendship_id": friendship.ID,
+		"actor_id":      callerID,
+	})
 
 	respondJSON(w, http.StatusCreated, friendship)
 }
@@ -226,6 +221,11 @@ func (s *Server) AcceptFriendRequestHandler(w http.ResponseWriter, r *http.Reque
 		s.pushNotification(requesterID, notif)
 	}
 
+	// Push event to update requester's pending badge
+	s.pushWSEvent(requesterID, "friend_request_handled", map[string]interface{}{
+		"friendship_id": friendship.ID,
+	})
+
 	respondJSON(w, http.StatusOK, friendship)
 }
 
@@ -248,6 +248,11 @@ func (s *Server) DeclineFriendRequestHandler(w http.ResponseWriter, r *http.Requ
 		respondError(w, http.StatusInternalServerError, "failed to decline friend request")
 		return
 	}
+
+	// Push event to update requester's pending badge
+	s.pushWSEvent(requesterID, "friend_request_handled", map[string]interface{}{
+		"actor_id": callerID,
+	})
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "declined"})
 }
@@ -516,6 +521,21 @@ func (s *Server) pushNotification(userID uuid.UUID, notif interface{}) {
 	data, err := json.Marshal(map[string]interface{}{
 		"type":    "notification.push",
 		"payload": notif,
+	})
+	if err != nil {
+		return
+	}
+	s.Hub.SendToUser(userID, data)
+}
+
+// pushWSEvent sends an arbitrary WS event to a user.
+func (s *Server) pushWSEvent(userID uuid.UUID, eventType string, payload interface{}) {
+	if s.Hub == nil {
+		return
+	}
+	data, err := json.Marshal(map[string]interface{}{
+		"type":    eventType,
+		"payload": payload,
 	})
 	if err != nil {
 		return

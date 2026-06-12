@@ -1042,23 +1042,16 @@ func (s *Store) RemoveFriend(ctx context.Context, userA, userB uuid.UUID) error 
 		return fmt.Errorf("db: remove friend: %w", err)
 	}
 
-	// Delete DM conversation if it exists
-	var user1, user2 uuid.UUID
-	if userA.String() < userB.String() {
-		user1, user2 = userA, userB
-	} else {
-		user1, user2 = userB, userA
-	}
-
 	// Deleting from conversations will cascade to messages and dm_pairs
 	_, err = tx.Exec(ctx, `
 		DELETE FROM conversations
 		WHERE id IN (
 			SELECT conversation_id 
 			FROM dm_pairs 
-			WHERE user_a_id = $1 AND user_b_id = $2
+			WHERE (user_a_id = $1 AND user_b_id = $2)
+			   OR (user_a_id = $2 AND user_b_id = $1)
 		)
-	`, user1, user2)
+	`, userA, userB)
 	if err != nil {
 		return fmt.Errorf("db: delete dm on unfriend: %w", err)
 	}

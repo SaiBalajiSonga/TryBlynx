@@ -185,6 +185,18 @@ export function DMs() {
   // ── Step 5: Send message (encrypt if both keys available) ─────────────────
   const activeChat = dms.find(c => c.id === id);
 
+  useEffect(() => {
+    const onFriendRemoved = (e: any) => {
+      const removedId = e.detail.userId;
+      setDms(prev => prev.filter(c => c.peer_id !== removedId));
+      if (activeChat?.peer_id === removedId) {
+        navigate('/app/dms', { replace: true });
+      }
+    };
+    window.addEventListener('blynx:friend-removed', onFriendRemoved);
+    return () => window.removeEventListener('blynx:friend-removed', onFriendRemoved);
+  }, [activeChat, navigate]);
+
   const handleSend = useCallback(async (e?: React.FormEvent | React.MouseEvent) => {
     if (e) e.preventDefault();
     if (!newMessage.trim() || !id || !user || !activeChat) return;

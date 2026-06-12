@@ -87,8 +87,11 @@ export const api = {
   /** Cancel an *outgoing* pending friend request that the caller sent. */
   cancelFriendRequest: (userId: string) =>
     fetchWithAuth(`/friends/request/${userId}`, { method: 'DELETE' }),
-  removeFriend: (userId: string) =>
-    fetchWithAuth(`/friends/${userId}`, { method: 'DELETE' }),
+  removeFriend: async (userId: string) => {
+    const res = await fetchWithAuth(`/friends/${userId}`, { method: 'DELETE' });
+    window.dispatchEvent(new CustomEvent('blynx:friend-removed', { detail: { userId } }));
+    return res;
+  },
 
   // ── Notifications ───────────────────────────────────────────
   getNotifications: (limit?: number) =>

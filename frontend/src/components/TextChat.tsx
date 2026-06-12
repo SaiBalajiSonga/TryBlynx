@@ -19,6 +19,27 @@ export function TextChat() {
     return () => clearInterval(t);
   }, [matchStatus]);
 
+  // Clean up when leaving the Text Chat page
+  useEffect(() => {
+    return () => {
+      const chat = useChatStore.getState();
+      
+      if (chat.activeRoomId) {
+        if (chat.matchPeerId) {
+          sendMessage('match.leave', { peer_id: chat.matchPeerId, room_id: chat.activeRoomId });
+        } else {
+          sendMessage('chat.leave', { room_id: chat.activeRoomId });
+        }
+        chat.clearMatchChat();
+      }
+      
+      if (chat.matchStatus === 'waiting') {
+        sendMessage('match.cancel', {});
+        chat.setMatchStatus('idle');
+      }
+    };
+  }, [sendMessage]);
+
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
   return (

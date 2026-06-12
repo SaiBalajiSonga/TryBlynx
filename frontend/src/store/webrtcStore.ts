@@ -33,8 +33,10 @@ export const useWebRTCStore = create<WebRTCState>((set, get) => ({
   consumeSignalsForPeer: (peerId) => {
     const { incomingSignals } = get();
     const mine = incomingSignals.filter(s => s.peer_id === peerId);
-    const rest = incomingSignals.filter(s => s.peer_id !== peerId);
-    set({ incomingSignals: rest });
+    if (mine.length > 0) {
+      const rest = incomingSignals.filter(s => s.peer_id !== peerId);
+      set({ incomingSignals: rest });
+    }
     return mine;
   },
 

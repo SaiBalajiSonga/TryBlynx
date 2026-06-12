@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useChatStore } from '../store/chatStore';
 import { useWebSocket } from '../lib/useWebSocket';
+import { useAuthStore } from '../store/authStore';
 import { Video, Zap, X, Camera } from 'lucide-react';
 import { useWebRTCStore } from '../store/webrtcStore';
 import { VideoRoom } from './VideoRoom';
@@ -16,25 +17,42 @@ export function VideoChat() {
   const { isVideoActive, activePeerId, isInitiator, startVideo } = useWebRTCStore();
   const [elapsed, setElapsed] = useState(0);
 
+  const user = useAuthStore(s => s.user);
+
   // FIX: When a match is found via text-match flow and we're on the video page,
-  // automatically start the video call. The matchmaker doesn't distinguish modes
-  // yet, so we detect "matched + on video page + no video session yet" and kick
-  // off the call ourselves.
+  // automatically start the video call. Determine initiator deterministically
+  // by comparing UUIDs so only one side sends the offer.
   useEffect(() => {
-    if (matchStatus === 'matched' && matchPeerId && activeRoomId && !isVideoActive) {
-      // Small delay to let WebRTC init settle
+    if (matchStatus === 'matched' && matchPeerId && activeRoomId && !isVideoActive && user) {
+      const isInitiator = user.id < matchPeerId;
       const t = setTimeout(() => {
-        startVideo(matchPeerId, true); // we are always the initiator on video-chat page
+        startVideo(matchPeerId, isInitiator);
       }, 500);
       return () => clearTimeout(t);
     }
-  }, [matchStatus, matchPeerId, activeRoomId, isVideoActive, startVideo]);
+  }, [matchStatus, matchPeerId, activeRoomId, isVideoActive, startVideo, user]);
 
   useEffect(() => {
     if (matchStatus !== 'waiting') { setElapsed(0); return; }
     const t = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => clearInterval(t);
   }, [matchStatus]);
+
+  // Clean up when leaving the Video Chat page
+  useEffect(() => {
+    return () => {
+      const webrtc = useWebRTCStore.getState();
+      if (webrtc.isVideoActive) {
+        webrtc.endVideo();
+      }
+      
+      const chat = useChatStore.getState();
+      if (chat.matchStatus === 'waiting') {
+        sendMessage('match.cancel', {});
+        chat.setMatchStatus('idle');
+      }
+    };
+  }, [sendMessage]);
 
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 

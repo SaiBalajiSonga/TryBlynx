@@ -7,7 +7,7 @@ import { useLocation, useNavigate, Routes, Route, Navigate } from 'react-router-
 import {
   Menu, Bell, MessageSquare, Zap, Crown, LogOut, Settings,
   Home as HomeIcon, Video, Users, Search as SearchIcon, Shield, Star,
-  Terminal, UserPlus, Check, X, UserCircle,
+  Terminal, UserPlus, Check, UserCircle,
   Clipboard, UserCheck,
 } from 'lucide-react';
 import { SettingsView } from './Settings';
@@ -34,7 +34,7 @@ export function Dashboard() {
   const wsStatus = useChatStore((s) => s.wsStatus);
   useWebSocket();
 
-  const { notifications, unreadCount, fetchNotifications, markAllRead } =
+  const { notifications, unreadCount, fetchNotifications, markAllRead, pendingFriendsCount, unseenPendingFriends, fetchPendingFriendsCount, markPendingFriendsSeen } =
     useNotificationStore();
 
   const location = useLocation();
@@ -45,9 +45,10 @@ export function Dashboard() {
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [showFriendsModal, setShowFriendsModal] = useState(false);
 
-  // Fetch notifications on mount
+  // Fetch notifications and pending friends on mount
   useEffect(() => { 
     fetchNotifications(); 
+    fetchPendingFriendsCount();
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
@@ -91,23 +92,18 @@ export function Dashboard() {
     await markAllRead();
   };
 
-  const handleFriendAccept = async (n: AppNotification) => {
-    try {
-      await api.acceptFriendRequest(n.actor_id!);
-      fetchNotifications();
-    } catch {}
-  };
-  const handleFriendDecline = async (n: AppNotification) => {
-    try {
-      await api.declineFriendRequest(n.actor_id!);
-      fetchNotifications();
-    } catch {}
-  };
-
-  const notifIcon = (type: string) => {
-    if (type === 'friend_request') return <UserPlus size={16} color="var(--accent)" />;
-    if (type === 'friend_accepted') return <UserCheck size={16} color="#57f287" />;
-    if (type === 'profile_approved') return <Check size={16} color="#57f287" />;
+  const notifIcon = (n: AppNotification) => {
+    if (n.type === 'friend_request' || n.type === 'friend_accepted') {
+      if (n.actor_avatar) {
+        return <img src={n.actor_avatar} alt="" style={{ width: '24px', height: '24px', borderRadius: '50%', objectFit: 'cover' }} />;
+      }
+      return (
+        <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: '11px' }}>
+          {(n.actor_name || 'U').charAt(0).toUpperCase()}
+        </div>
+      );
+    }
+    if (n.type === 'profile_approved') return <Check size={16} color="#57f287" />;
     return <Bell size={16} color="var(--text-muted)" />;
   };
 
@@ -192,21 +188,11 @@ export function Dashboard() {
                       onMouseLeave={e => e.currentTarget.style.background = n.is_read ? 'transparent' : 'rgba(88,101,242,0.06)'}
                     >
                       <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                        <div style={{ marginTop: '2px', flexShrink: 0 }}>{notifIcon(n.type)}</div>
+                        <div style={{ marginTop: '2px', flexShrink: 0, width: '24px', display: 'flex', justifyContent: 'center' }}>{notifIcon(n)}</div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ margin: '0 0 4px', fontSize: '13px', color: 'white', lineHeight: 1.4 }}>{notifLabel(n)}</p>
                           <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-muted)' }}>{timeAgo(n.created_at)}</p>
-                          {/* Inline accept/decline for friend requests */}
-                          {n.type === 'friend_request' && n.actor_id && (
-                            <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                              <button onClick={() => handleFriendAccept(n)} className="btn-accent" style={{ padding: '5px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <Check size={12} /> Accept
-                              </button>
-                              <button onClick={() => handleFriendDecline(n)} style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-secondary)', padding: '5px 10px', fontSize: '12px', borderRadius: '6px', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <X size={12} /> Decline
-                              </button>
-                            </div>
-                          )}
+
                         </div>
                       </div>
                     </div>
@@ -217,8 +203,11 @@ export function Dashboard() {
           </div>
 
           {/* Friends button */}
-          <button id="friends-nav-btn" onClick={() => setShowFriendsModal(true)} style={navBtnStyle} title="Friends">
+          <button id="friends-nav-btn" onClick={() => { setShowFriendsModal(true); markPendingFriendsSeen(); }} style={{ ...navBtnStyle, position: 'relative' }} title="Friends">
             <Users size={19} />
+            {pendingFriendsCount > 0 && unseenPendingFriends && (
+              <span style={badgeStyle('#ed4245')}>{pendingFriendsCount > 9 ? '9+' : pendingFriendsCount}</span>
+            )}
           </button>
 
           {/* DMs badge (real unread count) */}
