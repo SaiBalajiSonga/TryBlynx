@@ -34,8 +34,22 @@ export function DMs() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [e2eeReady, setE2eeReady] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleClearChat = async () => {
+    if (!id) return;
+    if (window.confirm('Are you sure you want to clear the entire chat history? This cannot be undone and will delete the chat for both users.')) {
+      try {
+        await api.clearDMMessages(id);
+        setMessages([]);
+        setShowMenu(false);
+      } catch (err: any) {
+        alert(err.message || 'Failed to clear chat');
+      }
+    }
+  };
 
   // ── Step 1: Ensure this user has a keypair ────────────────────────────────
   // Mirrors Instagram's approach: on first DM open, generate RSA keypair,
@@ -291,14 +305,37 @@ export function DMs() {
                   <span style={{ fontSize: '10px', color: isE2EE ? '#4ade80' : '#faa61a', fontWeight: 700 }}>{isE2EE ? 'E2EE' : 'Pending'}</span>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
-                {[Phone, Video, MoreVertical].map((Icon, i) => (
-                  <button key={i} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '7px', borderRadius: '8px', display: 'flex', transition: 'background 0.1s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'var(--blynx-750)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'none'}>
-                    <Icon size={17} />
-                  </button>
-                ))}
+              <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)', position: 'relative' }}>
+                <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '7px', borderRadius: '8px', display: 'flex', transition: 'background 0.1s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--blynx-750)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                  <Phone size={17} />
+                </button>
+                <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '7px', borderRadius: '8px', display: 'flex', transition: 'background 0.1s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--blynx-750)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                  <Video size={17} />
+                </button>
+                <button 
+                  onClick={() => setShowMenu(!showMenu)}
+                  style={{ background: showMenu ? 'var(--blynx-750)' : 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '7px', borderRadius: '8px', display: 'flex', transition: 'background 0.1s' }}
+                  onMouseEnter={e => { if (!showMenu) e.currentTarget.style.background = 'var(--blynx-750)' }}
+                  onMouseLeave={e => { if (!showMenu) e.currentTarget.style.background = 'none' }}>
+                  <MoreVertical size={17} />
+                </button>
+                
+                {showMenu && (
+                  <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '8px', background: 'var(--blynx-800)', border: '1px solid var(--border)', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', padding: '4px', zIndex: 10, width: '160px' }}>
+                    <button 
+                      onClick={handleClearChat}
+                      style={{ width: '100%', padding: '8px 12px', background: 'none', border: 'none', color: '#ed4245', textAlign: 'left', cursor: 'pointer', fontSize: '14px', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--blynx-750)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >
+                      Clear Chat
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 

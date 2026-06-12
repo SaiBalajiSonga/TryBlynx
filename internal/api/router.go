@@ -124,6 +124,7 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 		r.Get("/api/dm/list", s.ListDMsHandler)
 		r.Post("/api/dm/send", s.SendDMHandler)
 		r.Get("/api/dm/{conversationId}", s.GetDMMessagesHandler)
+		r.Delete("/api/dm/{conversationId}", s.ClearDMMessagesHandler)
 
 		// Friends
 		r.Get("/api/friends", s.ListFriendsHandler)

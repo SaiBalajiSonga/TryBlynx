@@ -1,9 +1,12 @@
-import { Menu, Zap, Bell, MessageSquare } from 'lucide-react';
+import { Menu, Zap, Bell, MessageSquare, Users } from 'lucide-react';
+import { useState } from 'react';
 import { useUIStore } from '../store/uiStore';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
+import { FriendsModal } from './FriendsModal';
 
 export function Navbar() {
+  const [showFriends, setShowFriends] = useState(false);
   const { toggleSidebar, setActivePanel, notifications } = useUIStore();
   const user = useAuthStore((s) => s.user);
   const wsStatus = useChatStore((s) => s.wsStatus);
@@ -11,6 +14,7 @@ export function Navbar() {
   const initials = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
 
   return (
+    <>
     <nav style={{
       height: '56px', flexShrink: 0,
       display: 'flex', alignItems: 'center',
@@ -48,6 +52,9 @@ export function Navbar() {
 
       {/* Right actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <button onClick={() => setShowFriends(true)} className="btn-icon" title="Friends">
+          <Users size={18} />
+        </button>
         <button onClick={() => setActivePanel('dms')} className="btn-icon" title="Messages">
           <MessageSquare size={18} />
         </button>
@@ -83,5 +90,7 @@ export function Navbar() {
         </button>
       </div>
     </nav>
+    {showFriends && <FriendsModal onClose={() => setShowFriends(false)} />}
+    </>
   );
 }

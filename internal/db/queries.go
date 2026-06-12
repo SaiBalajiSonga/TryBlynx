@@ -574,6 +574,18 @@ func (s *Store) DeleteMessage(ctx context.Context, id uuid.UUID, senderID uuid.U
 	return nil
 }
 
+// ClearConversationMessages deletes all messages in a specific conversation.
+func (s *Store) ClearConversationMessages(ctx context.Context, conversationID uuid.UUID) error {
+	_, err := s.Pool.Exec(ctx, `
+		DELETE FROM messages
+		WHERE conversation_id = $1
+	`, conversationID)
+	if err != nil {
+		return fmt.Errorf("db: failed to clear conversation messages: %w", err)
+	}
+	return nil
+}
+
 // ══════════════════════════════════════════════════════════════
 // DM / CONVERSATION OPERATIONS
 // ══════════════════════════════════════════════════════════════

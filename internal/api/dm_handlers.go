@@ -244,3 +244,33 @@ func (s *Server) GetGroupMembersHandler(w http.ResponseWriter, r *http.Request) 
 		"count":   len(members),
 	})
 }
+
+// ClearDMMessagesHandler handles DELETE /api/dm/{conversationId}.
+// Clears all messages in a DM conversation for the authenticated user.
+func (s *Server) ClearDMMessagesHandler(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromContext(r.Context())
+	convIDStr := chi.URLParam(r, "conversationId")
+	convID, err := uuid.Parse(convIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid conversation ID format")
+		return
+	}
+
+	// ── Authorization: Verify membership ──
+	isMember, err := s.Store.IsConversationMember(r.Context(), convID, userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if !isMember {
+		respondError(w, http.StatusForbidden, "you are not a member of this conversation")
+		return
+	}
+
+	if err := s.Store.ClearConversationMessages(r.Context(), convID); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to clear messages")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+}

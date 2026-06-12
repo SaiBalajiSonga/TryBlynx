@@ -154,7 +154,7 @@ export async function decryptMessage(
     const plain = await window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as ArrayBuffer }, aesKey, ct.buffer.slice(ct.byteOffset, ct.byteOffset + ct.byteLength) as ArrayBuffer);
     return new TextDecoder().decode(plain);
   } catch (err) {
-    console.error('[E2EE] Decryption failed:', err);
+    console.warn('[E2EE] Decryption failed (key mismatch or missing):', err);
     return '🔒 Unable to decrypt this message';
   }
 }

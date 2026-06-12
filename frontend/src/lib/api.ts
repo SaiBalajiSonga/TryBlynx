@@ -62,6 +62,8 @@ export const api = {
     fetchWithAuth(`/dm/start?recipient_id=${encodeURIComponent(recipientId)}`),
   getMessages: (conversationId: string, cursor?: string) =>
     fetchWithAuth(cursor ? `/dm/${conversationId}?cursor=${encodeURIComponent(cursor)}` : `/dm/${conversationId}`),
+  clearDMMessages: (conversationId: string) =>
+    fetchWithAuth(`/dm/${conversationId}`, { method: 'DELETE' }),
   /** Send a DM. Backend uses recipient_id + body at /api/dm/send */
   sendDM: (recipientId: string, body: string) =>
     fetchWithAuth('/dm/send', { method: 'POST', body: JSON.stringify({ recipient_id: recipientId, body }) }),
