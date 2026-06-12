@@ -126,6 +126,8 @@ func handleMessage(c *Client, msg *InboundMessage) {
 		handleMatchCancel(c, msg.Payload)
 	case "match.message":
 		handleMatchMessage(c, msg.Payload)
+	case "match.leave":
+		handleMatchLeave(c, msg.Payload)
 
 	// ── WebRTC Signaling ─────────────────────────────────
 	case "webrtc.offer", "webrtc.answer", "webrtc.ice":
@@ -177,6 +179,11 @@ type matchMessagePayload struct {
 	PeerID string `json:"peer_id"` // Target user UUID
 	RoomID string `json:"room_id"` // Ephemeral Room ID for UI
 	Body   string `json:"body"`    // 1-5000 characters
+}
+
+type matchLeavePayload struct {
+	PeerID string `json:"peer_id"` // Target user UUID
+	RoomID string `json:"room_id"` // Ephemeral Room ID for UI
 }
 
 type webrtcSignalPayload struct {
@@ -701,6 +708,32 @@ func handleMatchMessage(c *Client, payload json.RawMessage) {
 	default:
 		log.Printf("ws-handler: match.message confirmation dropped for slow sender %s", c.UserID)
 	}
+
+	// Deliver to peer via memory
+	c.Hub.direct <- &DirectMessage{TargetUserID: peerID, Data: outData}
+}
+
+// handleMatchLeave processes "match.leave" messages.
+// It notifies the ephemeral peer that the user has skipped or left.
+func handleMatchLeave(c *Client, payload json.RawMessage) {
+	var p matchLeavePayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.PeerID == "" {
+		return
+	}
+
+	peerID, err := uuid.Parse(p.PeerID)
+	if err != nil {
+		return
+	}
+
+	outbound := OutboundMessage{
+		Type: "chat.peer_left",
+		Payload: map[string]string{
+			"peer_id": c.UserID.String(),
+			"room_id": p.RoomID,
+		},
+	}
+	outData, _ := json.Marshal(outbound)
 
 	// Deliver to peer via memory
 	c.Hub.direct <- &DirectMessage{TargetUserID: peerID, Data: outData}

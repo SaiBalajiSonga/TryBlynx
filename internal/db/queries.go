@@ -1099,17 +1099,21 @@ func (s *Store) GetFriends(ctx context.Context, userID uuid.UUID) ([]models.Frie
 	return friends, rows.Err()
 }
 
-// GetFriendRequests returns all incoming pending requests for a user.
-func (s *Store) GetFriendRequests(ctx context.Context, userID uuid.UUID) ([]models.FriendRequest, error) {
+// GetFriendRequests returns all pending requests (incoming and outgoing) for a user.
+func (s *Store) GetFriendRequests(ctx context.Context, userID uuid.UUID) ([]models.FriendWithProfile, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT
 			f.id, f.requester_id, f.addressee_id, f.status, f.created_at, f.updated_at,
-			u.username AS requester_username,
-			COALESCE(NULLIF(u.display_name,''), u.username) AS requester_name,
-			COALESCE(u.avatar_url, '') AS requester_avatar
+			u.id AS peer_id,
+			u.username AS peer_username,
+			COALESCE(NULLIF(u.display_name,''), u.username) AS peer_name,
+			COALESCE(u.avatar_url, '') AS peer_avatar
 		FROM friendships f
-		JOIN users u ON u.id = f.requester_id
-		WHERE f.addressee_id = $1 AND f.status = 'pending'
+		JOIN users u ON u.id = CASE
+			WHEN f.requester_id = $1 THEN f.addressee_id
+			ELSE f.requester_id
+		END
+		WHERE (f.requester_id = $1 OR f.addressee_id = $1) AND f.status = 'pending'
 		ORDER BY f.created_at DESC`,
 		userID,
 	)
@@ -1118,19 +1122,19 @@ func (s *Store) GetFriendRequests(ctx context.Context, userID uuid.UUID) ([]mode
 	}
 	defer rows.Close()
 
-	var requests []models.FriendRequest
+	var requests []models.FriendWithProfile
 	for rows.Next() {
-		var fr models.FriendRequest
+		var fw models.FriendWithProfile
 		if err := rows.Scan(
-			&fr.ID, &fr.RequesterID, &fr.AddresseeID, &fr.Status, &fr.CreatedAt, &fr.UpdatedAt,
-			&fr.RequesterUsername, &fr.RequesterName, &fr.RequesterAvatar,
+			&fw.ID, &fw.RequesterID, &fw.AddresseeID, &fw.Status, &fw.CreatedAt, &fw.UpdatedAt,
+			&fw.PeerID, &fw.PeerUsername, &fw.PeerName, &fw.PeerAvatar,
 		); err != nil {
 			return nil, fmt.Errorf("db: scan friend request: %w", err)
 		}
-		requests = append(requests, fr)
+		requests = append(requests, fw)
 	}
 	if requests == nil {
-		requests = []models.FriendRequest{}
+		requests = []models.FriendWithProfile{}
 	}
 	return requests, rows.Err()
 }
@@ -1415,4 +1419,35 @@ func (s *Store) RejectProfileReview(ctx context.Context, reviewID, reviewerID uu
 		return nil, fmt.Errorf("db: reject review: %w", err)
 	}
 	return &pr, nil
+}
+
+// ══════════════════════════════════════════════════════════════
+// KEY BACKUP (E2EE)
+// ══════════════════════════════════════════════════════════════
+
+// SaveKeyBackup stores the user's encrypted E2EE private key.
+func (s *Store) SaveKeyBackup(ctx context.Context, userID uuid.UUID, blob string) error {
+	_, err := s.Pool.Exec(ctx, `
+		UPDATE users
+		SET key_backup_blob = $1
+		WHERE id = $2
+	`, blob, userID)
+	if err != nil {
+		return fmt.Errorf("db: failed to save key backup: %w", err)
+	}
+	return nil
+}
+
+// GetKeyBackup retrieves the user's encrypted E2EE private key.
+func (s *Store) GetKeyBackup(ctx context.Context, userID uuid.UUID) (string, error) {
+	var blob string
+	err := s.Pool.QueryRow(ctx, `
+		SELECT COALESCE(key_backup_blob, '')
+		FROM users
+		WHERE id = $1
+	`, userID).Scan(&blob)
+	if err != nil {
+		return "", fmt.Errorf("db: failed to get key backup: %w", err)
+	}
+	return blob, nil
 }
