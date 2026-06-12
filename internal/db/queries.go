@@ -813,17 +813,7 @@ func (s *Store) GetUserDMs(ctx context.Context, userID uuid.UUID) ([]DMConversat
 // GetConversationMembers retrieves all members of a conversation, ordered by VIP/Admin status and then username.
 func (s *Store) GetConversationMembers(ctx context.Context, conversationID uuid.UUID) ([]models.User, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT u.id, u.username, u.email, u.password_hash,
-			COALESCE(u.display_name, '') AS display_name,
-			COALESCE(u.avatar_url, '') AS avatar_url,
-			COALESCE(u.bio, '') AS bio,
-			u.gender, u.location, u.language, u.interests,
-			u.is_vip, u.is_admin, u.is_moderator, u.is_developer, u.shadowbanned,
-			COALESCE(u.public_key, '') AS public_key,
-			COALESCE(u.device_fingerprint, '') AS device_fingerprint,
-			COALESCE(u.strike_count, 0) AS strike_count,
-			u.banned_until,
-			u.created_at, u.updated_at
+		SELECT `+userColumns+`
 		FROM users u
 		JOIN conversation_members cm ON cm.user_id = u.id
 		WHERE cm.conversation_id = $1
