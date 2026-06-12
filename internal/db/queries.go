@@ -988,9 +988,15 @@ func (s *Store) DeclineFriendRequest(ctx context.Context, requesterID, addressee
 	return nil
 }
 
-// RemoveFriend deletes an accepted friendship in either direction.
+// RemoveFriend deletes an accepted friendship in either direction and the associated DM conversation.
 func (s *Store) RemoveFriend(ctx context.Context, userA, userB uuid.UUID) error {
-	_, err := s.Pool.Exec(ctx, `
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("db: remove friend begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
 		DELETE FROM friendships
 		WHERE status = 'accepted'
 		  AND ((requester_id = $1 AND addressee_id = $2)
@@ -1000,7 +1006,29 @@ func (s *Store) RemoveFriend(ctx context.Context, userA, userB uuid.UUID) error 
 	if err != nil {
 		return fmt.Errorf("db: remove friend: %w", err)
 	}
-	return nil
+
+	// Delete DM conversation if it exists
+	var user1, user2 uuid.UUID
+	if userA.String() < userB.String() {
+		user1, user2 = userA, userB
+	} else {
+		user1, user2 = userB, userA
+	}
+
+	// Deleting from conversations will cascade to messages and dm_pairs
+	_, err = tx.Exec(ctx, `
+		DELETE FROM conversations
+		WHERE id IN (
+			SELECT conversation_id 
+			FROM dm_pairs 
+			WHERE user_a_id = $1 AND user_b_id = $2
+		)
+	`, user1, user2)
+	if err != nil {
+		return fmt.Errorf("db: delete dm on unfriend: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
 
 // BlockFriend creates or upgrades a relationship to blocked status.
