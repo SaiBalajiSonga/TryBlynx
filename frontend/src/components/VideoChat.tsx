@@ -4,6 +4,7 @@ import { useWebSocket } from '../lib/useWebSocket';
 import { Video, Zap, X, Camera } from 'lucide-react';
 import { useWebRTCStore } from '../store/webrtcStore';
 import { VideoRoom } from './VideoRoom';
+import { MatchHistorySidebar } from './MatchHistorySidebar';
 
 export function VideoChat() {
   const wsStatus   = useChatStore(s => s.wsStatus);
@@ -40,19 +41,24 @@ export function VideoChat() {
   // Show video room overlay if active
   if (isVideoActive && activePeerId) {
     return (
-      <div style={{ flex: 1, position: 'relative', background: '#000', overflow: 'hidden' }}>
-        <VideoRoom peerId={activePeerId} isInitiator={isInitiator} />
+      <div style={{ flex: 1, display: 'flex', height: '100%', overflow: 'hidden' }}>
+        <MatchHistorySidebar />
+        <div style={{ flex: 1, position: 'relative', background: '#000', overflow: 'hidden' }}>
+          <VideoRoom peerId={activePeerId} isInitiator={isInitiator} />
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{
-      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '32px', background: 'var(--blynx-900)',
-      backgroundImage: 'radial-gradient(ellipse at center, rgba(244,114,182,0.06) 0%, transparent 70%)',
-    }}>
-      <div style={{ maxWidth: '440px', width: '100%', textAlign: 'center' }}>
+    <div style={{ flex: 1, display: 'flex', height: '100%', overflow: 'hidden' }}>
+      <MatchHistorySidebar />
+      <div style={{
+        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '32px', background: 'var(--blynx-900)',
+        backgroundImage: 'radial-gradient(ellipse at center, rgba(244,114,182,0.06) 0%, transparent 70%)',
+      }}>
+        <div style={{ maxWidth: '440px', width: '100%', textAlign: 'center' }}>
         {/* Animated icon */}
         <div style={{ position: 'relative', display: 'inline-flex', marginBottom: '36px' }}>
           {matchStatus === 'waiting' && [0, 1].map(i => (
@@ -122,6 +128,7 @@ export function VideoChat() {
           </button>
         )}
       </div>
+    </div>
     </div>
   );
 }
