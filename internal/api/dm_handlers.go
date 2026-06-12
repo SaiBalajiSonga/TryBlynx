@@ -111,6 +111,33 @@ func (s *Server) SendDMHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── Block anonymous (guest) senders ──────────────────────
+	caller, err := s.Store.GetUserByID(r.Context(), userID)
+	if err != nil || caller == nil {
+		respondError(w, http.StatusInternalServerError, "failed to load user")
+		return
+	}
+	if caller.IsAnonymous {
+		respondError(w, http.StatusForbidden, "guest accounts cannot send direct messages")
+		return
+	}
+
+	// ── Require an accepted friendship ───────────────────────
+	isFriend, err := s.Store.IsFriend(r.Context(), userID, recipientID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if !isFriend {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "not_friends",
+			"message": "You must be friends to send direct messages.",
+		})
+		return
+	}
+
 	// ── Get or create DM conversation ────────────────────────
 	convID, err := s.Store.GetOrCreateDM(r.Context(), userID, recipientID)
 	if err != nil {
