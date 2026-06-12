@@ -1,3 +1,8 @@
+// ⚠️ DEAD CODE — This component is never rendered anywhere.
+// Dashboard.tsx contains its own inline navbar.
+// Additionally, `notifications` is read from useUIStore which is a different,
+// never-populated store from useNotificationStore — so the unread badge is always 0.
+// TODO: Either wire this up (replace Dashboard's inline nav) or delete this file.
 import { Menu, Zap, Bell, MessageSquare, Users } from 'lucide-react';
 import { useState } from 'react';
 import { useUIStore } from '../store/uiStore';
