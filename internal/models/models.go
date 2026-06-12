@@ -29,31 +29,31 @@ import (
 //   - Shadowbanned is tagged json:"-" to maintain transparency
 //     (shadowbanned users must not know their status).
 type User struct {
-	ID                uuid.UUID  `json:"id"`
-	Username          string     `json:"username"`
-	Email             string     `json:"email"`
-	PasswordHash      string     `json:"-"`
-	DisplayName       string     `json:"display_name"`
-	AvatarURL         string     `json:"avatar_url"`
-	Bio               string     `json:"bio"`
-	Gender            string     `json:"gender"`
-	Location          string     `json:"location"`
-	Language          string     `json:"language"`
-	Interests         []string   `json:"interests"`
-	IsVIP             bool       `json:"is_vip"`
-	IsAdmin           bool       `json:"is_admin"`
-	IsModerator       bool       `json:"is_moderator"`
-	IsDeveloper       bool       `json:"is_developer"`
-	PublicKey         string     `json:"public_key"`
-	EncryptedPrivateKey string   `json:"encrypted_private_key,omitempty"` // E2EE Backup
-	Shadowbanned      bool       `json:"-"`
-	DeviceFingerprint string     `json:"-"`
-	StrikeCount       int        `json:"strike_count"`
-	BannedUntil       *time.Time `json:"banned_until"`
-	IsAnonymous       bool       `json:"is_anonymous"`
-	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                  uuid.UUID  `json:"id"`
+	Username            string     `json:"username"`
+	Email               string     `json:"email"`
+	PasswordHash        string     `json:"-"`
+	DisplayName         string     `json:"display_name"`
+	AvatarURL           string     `json:"avatar_url"`
+	Bio                 string     `json:"bio"`
+	Gender              string     `json:"gender"`
+	Location            string     `json:"location"`
+	Language            string     `json:"language"`
+	Interests           []string   `json:"interests"`
+	IsVIP               bool       `json:"is_vip"`
+	IsAdmin             bool       `json:"is_admin"`
+	IsModerator         bool       `json:"is_moderator"`
+	IsDeveloper         bool       `json:"is_developer"`
+	PublicKey           string     `json:"public_key"`
+	EncryptedPrivateKey string     `json:"-"` // E2EE Backup — never serialized to JSON; returned explicitly in authResponse
+	Shadowbanned        bool       `json:"-"`
+	DeviceFingerprint   string     `json:"-"`
+	StrikeCount         int        `json:"-"` // internal moderation field; not shared cross-user
+	BannedUntil         *time.Time `json:"-"` // internal moderation field; not shared cross-user
+	IsAnonymous         bool       `json:"is_anonymous"`
+	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 // PublicUser is a safe view of a User, exposing only public-safe fields.

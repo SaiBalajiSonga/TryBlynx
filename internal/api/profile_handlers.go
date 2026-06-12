@@ -16,13 +16,33 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"tryblynx/internal/auth"
+	"tryblynx/internal/models"
 )
+
+// toPublicUser converts a full models.User into the safe cross-user projection.
+func toPublicUser(u *models.User) models.PublicUser {
+	return models.PublicUser{
+		ID:          u.ID,
+		Username:    u.Username,
+		DisplayName: u.DisplayName,
+		AvatarURL:   u.AvatarURL,
+		Bio:         u.Bio,
+		Gender:      u.Gender,
+		Location:    u.Location,
+		Language:    u.Language,
+		Interests:   u.Interests,
+		IsVIP:       u.IsVIP,
+		IsAnonymous: u.IsAnonymous,
+		CreatedAt:   u.CreatedAt,
+	}
+}
 
 // updateProfileRequest defines the JSON body for PUT /api/profile.
 // All fields are required in the payload (full-replacement update).
@@ -74,16 +94,16 @@ func (s *Server) GetProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProfileHandler handles PUT /api/profile.
 //
-// Accepts a JSON body with all editable profile fields and
-// updates the authenticated user's record. This is a full-
-// replacement update: fields omitted from the payload will be
-// stored as their zero values (empty string / empty slice).
+// For sensitive fields (display_name, avatar_url, bio), submits a moderation
+// review rather than applying immediately. The moderator queue then approves
+// or rejects the change via /api/mod/reviews.
 //
-// Validates gender against the allowed enum values. Defaults
-// gender to "unspecified" and language to "en" if left empty.
+// Non-sensitive fields (public_key, language, location, interests) are applied
+// immediately without requiring review.
 //
 // Status codes:
-//   - 200 OK:                 Profile updated, new state returned.
+//   - 200 OK:                 Non-sensitive fields applied immediately.
+//   - 202 Accepted:           Review submitted for moderated fields.
 //   - 400 Bad Request:        Invalid JSON or gender value.
 //   - 500 Internal Server Error: Database failure.
 func (s *Server) UpdateProfileHandler(w http.ResponseWriter, r *http.Request) {
@@ -113,10 +133,18 @@ func (s *Server) UpdateProfileHandler(w http.ResponseWriter, r *http.Request) {
 		req.Interests = []string{}
 	}
 
-	// ── Persist changes ──────────────────────────────────────
-	user, err := s.Store.UpdateUserProfile(
+	// ── Load current user (needed for old_data snapshot) ─────
+	currentUser, err := s.Store.GetUserByID(r.Context(), userID)
+	if err != nil || currentUser == nil {
+		respondError(w, http.StatusInternalServerError, "failed to load user")
+		return
+	}
+
+	// ── Apply non-sensitive fields immediately ────────────────
+	// (public_key, language, location, interests do not need mod review)
+	_, err = s.Store.UpdateUserProfile(
 		r.Context(), userID,
-		req.DisplayName, req.AvatarURL, req.Bio,
+		currentUser.DisplayName, currentUser.AvatarURL, currentUser.Bio, // keep existing moderated fields
 		req.Gender, req.Location, req.Language, req.Interests, req.PublicKey,
 	)
 	if err != nil {
@@ -124,7 +152,38 @@ func (s *Server) UpdateProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, user)
+	// ── Queue moderated fields for review if changed ──────────
+	moderatedChanged := req.DisplayName != currentUser.DisplayName ||
+		req.AvatarURL != currentUser.AvatarURL ||
+		req.Bio != currentUser.Bio
+
+	if moderatedChanged {
+		oldDataJSON := fmt.Sprintf(
+			`{"display_name":%q,"avatar_url":%q,"bio":%q}`,
+			currentUser.DisplayName, currentUser.AvatarURL, currentUser.Bio,
+		)
+		newDataJSON := fmt.Sprintf(
+			`{"display_name":%q,"avatar_url":%q,"bio":%q}`,
+			req.DisplayName, req.AvatarURL, req.Bio,
+		)
+		if _, err := s.Store.CreateProfileReview(r.Context(), userID, oldDataJSON, newDataJSON); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to submit profile for review")
+			return
+		}
+		respondJSON(w, http.StatusAccepted, map[string]string{
+			"status":  "pending_review",
+			"message": "Your display name, avatar, and bio changes are pending moderator review.",
+		})
+		return
+	}
+
+	// No moderated fields changed — return the updated user
+	updatedUser, err := s.Store.GetUserByID(r.Context(), userID)
+	if err != nil || updatedUser == nil {
+		respondError(w, http.StatusInternalServerError, "failed to fetch updated profile")
+		return
+	}
+	respondJSON(w, http.StatusOK, updatedUser)
 }
 
 // GetProfileByIDHandler handles GET /api/profile/{id}.
@@ -155,7 +214,7 @@ func (s *Server) GetProfileByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, user)
+	respondJSON(w, http.StatusOK, toPublicUser(user))
 }
 
 // SearchUsersHandler handles GET /api/users/search?q={query}.
@@ -179,7 +238,12 @@ func (s *Server) SearchUsersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pubUsers := make([]models.PublicUser, len(users))
+	for i, u := range users {
+		pubUsers[i] = toPublicUser(&u)
+	}
+
 	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"users": users,
+		"users": pubUsers,
 	})
 }

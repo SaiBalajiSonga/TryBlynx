@@ -46,9 +46,13 @@ type loginRequest struct {
 
 // authResponse is the standard response for successful auth operations.
 // Contains the JWT and the full user profile (sans sensitive fields).
+// EncryptedPrivateKey is included here explicitly because models.User
+// tags it json:"-" (to prevent cross-user exposure), but the authenticating
+// user needs their own encrypted key to restore their E2EE private key.
 type authResponse struct {
-	Token string      `json:"token"`
-	User  interface{} `json:"user"`
+	Token               string      `json:"token"`
+	User                interface{} `json:"user"`
+	EncryptedPrivateKey string      `json:"encrypted_private_key,omitempty"`
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -152,7 +156,7 @@ func (s *Server) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, authResponse{Token: token, User: user})
+	respondJSON(w, http.StatusCreated, authResponse{Token: token, User: user, EncryptedPrivateKey: user.EncryptedPrivateKey})
 }
 
 // LoginHandler handles POST /api/login.
@@ -234,5 +238,5 @@ func (s *Server) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, authResponse{Token: token, User: user})
+	respondJSON(w, http.StatusOK, authResponse{Token: token, User: user, EncryptedPrivateKey: user.EncryptedPrivateKey})
 }
