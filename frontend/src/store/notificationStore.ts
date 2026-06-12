@@ -57,10 +57,14 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   },
 
   addNotification: (n: AppNotification) => {
-    set(state => ({
-      notifications: [n, ...state.notifications].slice(0, 50),
-      unreadCount: state.unreadCount + (n.is_read ? 0 : 1),
-    }));
+    set(state => {
+      if (state.notifications.some(existing => existing.id === n.id)) return state;
+      if (n.type === 'friend_request' && state.notifications.some(existing => existing.type === 'friend_request' && existing.actor_id === n.actor_id)) return state;
+      return {
+        notifications: [n, ...state.notifications].slice(0, 50),
+        unreadCount: state.unreadCount + (n.is_read ? 0 : 1),
+      };
+    });
   },
 
   setUnreadCount: (count: number) => set({ unreadCount: count }),

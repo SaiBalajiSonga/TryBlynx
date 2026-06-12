@@ -18,6 +18,7 @@ import { GroupChat } from './GroupChat';
 import { DMs } from './DMs';
 import { Search } from './Search';
 import { UserProfileModal } from './UserProfileModal';
+import { FriendsModal } from './FriendsModal';
 import { ModLog } from './ModLog';
 import { useWebSocket } from '../lib/useWebSocket';
 import { api } from '../lib/api';
@@ -42,6 +43,7 @@ export function Dashboard() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(getSavedSidebarState);
   const [activeDropdown, setActiveDropdown] = useState<'notifications' | 'profile' | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  const [showFriendsModal, setShowFriendsModal] = useState(false);
 
   // Fetch notifications on mount
   useEffect(() => { 
@@ -214,6 +216,11 @@ export function Dashboard() {
             )}
           </div>
 
+          {/* Friends button */}
+          <button id="friends-nav-btn" onClick={() => setShowFriendsModal(true)} style={navBtnStyle} title="Friends">
+            <Users size={19} />
+          </button>
+
           {/* DMs badge (real unread count) */}
           <button id="dms-nav-btn" onClick={() => navigate('/app/dms')} style={{ ...navBtnStyle, position: 'relative' }}>
             <MessageSquare size={19} />
@@ -366,6 +373,9 @@ export function Dashboard() {
 
       {selectedProfileId && (
         <UserProfileModal userId={selectedProfileId} onClose={() => setSelectedProfileId(null)} />
+      )}
+      {showFriendsModal && (
+        <FriendsModal onClose={() => setShowFriendsModal(false)} />
       )}
       <ToastContainer />
     </div>
