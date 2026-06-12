@@ -86,6 +86,7 @@ export function useWebSocket() {
         break;
       case 'match.found':
         // Ephemeral P2P chat: set peer/room directly without joining a DB room
+        useChatStore.getState().setIsPeerDisconnected(false);
         setMatchPeerId(data.payload.peer_id);
         setActiveRoomId(data.payload.room_id);
         setTimeout(() => setMatchStatus('matched', undefined), 0);
@@ -93,6 +94,7 @@ export function useWebSocket() {
       case 'chat.joined':
         // Set activeRoomId first, then switch status in next tick
         // so ChatRoom never renders with null activeRoomId
+        useChatStore.getState().setIsPeerDisconnected(false);
         setActiveRoomId(data.payload.room_id);
         setTimeout(() => setMatchStatus('matched', undefined), 0);
         break;
@@ -100,8 +102,8 @@ export function useWebSocket() {
         // Acknowledgment that we successfully left a room. Ignore.
         break;
       case 'chat.peer_left':
-        // Peer left — return to idle. clearMatchChat avoids wiping DM history.
-        useChatStore.getState().clearMatchChat();
+        // Peer left — mark as disconnected so ChatRoom can show "Stranger has disconnected"
+        useChatStore.getState().setIsPeerDisconnected(true);
         break;
       case 'notification.push': {
         // Real-time notification pushed by the server
@@ -136,15 +138,32 @@ export function useWebSocket() {
   // Always keep the ref pointing to the latest handleMessage
   handleMessageRef.current = handleMessage;
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!token) return;
-    if (isConnecting) return;
-    if (globalWs && (globalWs.readyState === WebSocket.OPEN || globalWs.readyState === WebSocket.CONNECTING)) return;
+    if (isConnecting || globalWs?.readyState === WebSocket.OPEN) return;
 
     isConnecting = true;
+
+    // Fast fail for auth: If the DB was wiped (e.g. docker reset),
+    // the WS connection will fail with a generic 1006.
+    // Fetch profile first to trigger the 401 clearAuth hook if needed.
+    try {
+      await fetch(`${(import.meta as any).env?.VITE_API_URL || 'http://localhost:8080/api'}/profile`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      }).then(r => {
+        if (r.status === 401) {
+          useAuthStore.getState().clearAuth();
+          throw new Error('Unauthorized');
+        }
+      });
+    } catch {
+      isConnecting = false;
+      return;
+    }
+
     setWsStatus('connecting');
 
-    const WS_URL = (import.meta as any).env?.VITE_WS_URL || 'ws://localhost:8080/ws';
+    const WS_URL = ((import.meta as any).env?.VITE_WS_URL || 'ws://localhost:8080/ws');
     const ws = new WebSocket(`${WS_URL}?token=${token}`);
     globalWs = ws;
 

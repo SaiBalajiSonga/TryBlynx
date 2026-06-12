@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-import { Send, Video, PhoneOff, Hash, MoreHorizontal } from 'lucide-react';
+import { Send, Video, PhoneOff, Hash, MoreHorizontal, FastForward, Clock } from 'lucide-react';
 import { useChatStore } from '../store/chatStore';
 import { useAuthStore } from '../store/authStore';
 import { useWebSocket } from '../lib/useWebSocket';
@@ -11,14 +11,17 @@ const EMPTY_MESSAGES: import('../store/chatStore').ChatMessage[] = [];
 
 export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
   const [message, setMessage] = useState('');
-  const [peerProfile, setPeerProfile] = useState<{ display_name?: string, username: string } | null>(null);
+  const [peerProfile, setPeerProfile] = useState<{ display_name?: string, username: string, avatar_url?: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const user = useAuthStore((s) => s.user);
   const activeRoomId = useChatStore((s) => s.activeRoomId);
   const messages = useChatStore((s) => (activeRoomId ? s.messages[activeRoomId] : undefined) ?? EMPTY_MESSAGES);
+  const isPeerDisconnected = useChatStore((s) => s.isPeerDisconnected);
   const matchPeerId = useChatStore((s) => s.matchPeerId);
+  const recentMatches = useChatStore((s) => s.recentMatches);
+  const targetGender = useChatStore((s) => s.targetGender);
   const clearChat = useChatStore((s) => s.clearChat);
   const startVideo = useWebRTCStore((s) => s.startVideo);
   const { sendMessage } = useWebSocket();
@@ -46,8 +49,28 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
   }, [matchPeerId]);
 
   useEffect(() => {
-    inputRef.current?.focus();
-  }, [activeRoomId]);
+    if (!isPeerDisconnected) {
+      inputRef.current?.focus();
+    }
+  }, [activeRoomId, isPeerDisconnected]);
+
+  const handleSkip = () => {
+    if (activeRoomId) sendMessage('chat.leave', { room_id: activeRoomId });
+    useChatStore.getState().clearMatchChat();
+    // Re-queue
+    sendMessage('match.find', { target_gender: targetGender || 'any', mode: 'chat' });
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleSkip();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeRoomId, targetGender]);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,7 +101,8 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--blynx-900)' }}>
+    <div style={{ flex: 1, display: 'flex', height: '100%', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--blynx-900)' }}>
       {/* Header */}
       <div style={{
         padding: '0 20px',
@@ -97,7 +121,11 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '13px', fontWeight: 700, color: 'white',
               }}>
-                {(peerProfile.display_name || peerProfile.username).charAt(0).toUpperCase()}
+                {peerProfile.avatar_url ? (
+                  <img src={peerProfile.avatar_url} alt="Avatar" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
+                ) : (
+                  (peerProfile.display_name || peerProfile.username).charAt(0).toUpperCase()
+                )}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <span style={{ fontWeight: 600, fontSize: '14px', color: 'white', lineHeight: '1.2' }}>{peerProfile.display_name || peerProfile.username}</span>
@@ -111,8 +139,10 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
             </>
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginLeft: '10px' }}>
-            <span className="status-dot connected" style={{ width: '6px', height: '6px' }} />
-            <span style={{ fontSize: '12px', color: 'var(--teal)' }}>Connected</span>
+            <span className={`status-dot ${isPeerDisconnected ? 'offline' : 'connected'}`} style={{ width: '6px', height: '6px' }} />
+            <span style={{ fontSize: '12px', color: isPeerDisconnected ? 'var(--text-muted)' : 'var(--teal)' }}>
+              {isPeerDisconnected ? 'Disconnected' : 'Connected'}
+            </span>
           </div>
         </div>
 
@@ -138,6 +168,25 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
               Video
             </button>
           )}
+          <button
+            onClick={handleSkip}
+            style={{
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: 'none',
+              cursor: 'pointer',
+              background: 'var(--accent)',
+              color: 'white',
+              display: 'flex', alignItems: 'center', gap: '6px',
+              fontSize: '13px', fontWeight: 600,
+              fontFamily: 'inherit',
+              transition: 'background 0.12s',
+            }}
+            title="Skip to next person (Esc)"
+          >
+            <FastForward size={15} />
+            Skip
+          </button>
           <button
             onClick={handleDisconnect}
             style={{
@@ -233,7 +282,11 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: '13px', fontWeight: 700, color: 'white',
                     }}>
-                      {peerProfile ? (peerProfile.display_name || peerProfile.username).charAt(0).toUpperCase() : msg.sender_name.charAt(0).toUpperCase()}
+                      {peerProfile && peerProfile.avatar_url ? (
+                        <img src={peerProfile.avatar_url} alt="Avatar" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
+                      ) : (
+                        peerProfile ? (peerProfile.display_name || peerProfile.username).charAt(0).toUpperCase() : msg.sender_name.charAt(0).toUpperCase()
+                      )}
                     </div>
                   )}
                 </div>
@@ -270,6 +323,20 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
           );
         })}
         <div ref={messagesEndRef} />
+        {isPeerDisconnected && (
+          <div style={{ textAlign: 'center', margin: '20px 0' }}>
+            <span style={{
+              background: 'rgba(237,66,69,0.1)',
+              color: '#ed4245',
+              padding: '6px 12px',
+              borderRadius: '12px',
+              fontSize: '12px',
+              fontWeight: 600,
+            }}>
+              Stranger has disconnected
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Input */}
@@ -286,7 +353,8 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
               type="text"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Send a message…"
+              placeholder={isPeerDisconnected ? "Stranger has left the chat." : "Send a message…"}
+              disabled={isPeerDisconnected}
               className="input-field"
               style={{ paddingRight: '12px' }}
               maxLength={5000}
@@ -294,7 +362,7 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
           </div>
           <button
             type="submit"
-            disabled={!message.trim()}
+            disabled={!message.trim() || isPeerDisconnected}
             style={{
               width: '40px', height: '40px',
               borderRadius: '8px',
@@ -310,6 +378,57 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
             <Send size={17} />
           </button>
         </form>
+      </div>
+      </div>
+
+      {/* Sidebar */}
+      <div style={{ 
+        width: '280px', 
+        borderLeft: '1px solid var(--border)', 
+        background: 'var(--blynx-850)', 
+        display: 'flex', 
+        flexDirection: 'column',
+        flexShrink: 0
+      }}>
+        <div style={{
+          padding: '0 20px',
+          height: '56px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center',
+        }}>
+          <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'white', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+            <Clock size={16} color="var(--text-muted)" />
+            Recent Matches
+          </h3>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {recentMatches.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', marginTop: '20px' }}>
+              No recent matches.
+            </p>
+          ) : (
+            recentMatches.map(match => (
+              <div key={match.peer_id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: 'var(--blynx-800)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                <div style={{
+                  width: '32px', height: '32px', borderRadius: '50%',
+                  background: 'linear-gradient(135deg, var(--accent), #7289da)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '13px', fontWeight: 700, color: 'white', flexShrink: 0
+                }}>
+                  {(match.display_name || match.username).charAt(0).toUpperCase()}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {match.display_name || match.username}
+                  </span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {new Date(match.matched_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

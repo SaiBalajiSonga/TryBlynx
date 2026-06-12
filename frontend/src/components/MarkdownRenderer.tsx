@@ -22,7 +22,7 @@ const Spoiler: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   );
 };
 
-export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
+export const MarkdownRenderer: React.FC<{ content: string; edited?: boolean }> = ({ content, edited }) => {
   if (!content) return null;
 
   const parseInline = (text: string): React.ReactNode[] => {
@@ -142,9 +142,13 @@ export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => 
       continue;
     }
 
+    const isLastLine = i === lines.length - 1;
     elements.push(
-      <div key={i} style={{ minHeight: line.trim() === '' ? '14px' : 'auto' }}>
+      <div key={i} style={{ minHeight: line.trim() === '' ? '14px' : 'auto', display: 'inline' }}>
         {parseInline(line)}
+        {edited && isLastLine && (
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px', userSelect: 'none' }}>(edited)</span>
+        )}
       </div>
     );
   }

@@ -33,6 +33,7 @@ interface ChatState {
   targetGender: string | null;
   activeRoomId: string | null;
   matchPeerId: string | null;
+  isPeerDisconnected: boolean;
   messages: Record<string, ChatMessage[]>;
   dmMessages: Record<string, DMMessage[]>;
   dmUnreadCounts: Record<string, number>;
@@ -42,6 +43,7 @@ interface ChatState {
   setMatchStatus: (status: 'idle' | 'waiting' | 'matched' | 'cancelled', targetGender?: string) => void;
   setActiveRoomId: (roomId: string | null) => void;
   setMatchPeerId: (id: string | null) => void;
+  setIsPeerDisconnected: (val: boolean) => void;
   addMessage: (roomId: string, message: ChatMessage) => void;
   addDMMessage: (conversationId: string, message: DMMessage) => void;
   updateMessage: (roomId: string, messageId: string, newBody: string, isEdited: boolean) => void;
@@ -60,6 +62,7 @@ export const useChatStore = create<ChatState>((set) => ({
   targetGender: null,
   activeRoomId: null,
   matchPeerId: null,
+  isPeerDisconnected: false,
   messages: {},
   dmMessages: {},
   dmUnreadCounts: {},
@@ -69,6 +72,7 @@ export const useChatStore = create<ChatState>((set) => ({
   setMatchStatus: (status, targetGender) => set({ matchStatus: status, targetGender: targetGender ?? null }),
   setActiveRoomId: (roomId) => set({ activeRoomId: roomId }),
   setMatchPeerId: (id) => set({ matchPeerId: id }),
+  setIsPeerDisconnected: (val) => set({ isPeerDisconnected: val }),
 
   addMessage: (roomId, message) => set((state) => {
     const existing = state.messages[roomId] || [];
@@ -150,6 +154,7 @@ export const useChatStore = create<ChatState>((set) => ({
       targetGender: null,
       activeRoomId: null,
       matchPeerId: null,
+      isPeerDisconnected: false,
       messages: newMessages,
       // dmMessages and dmUnreadCounts intentionally preserved
     };
@@ -160,6 +165,7 @@ export const useChatStore = create<ChatState>((set) => ({
     targetGender: null,
     activeRoomId: null,
     matchPeerId: null,
+    isPeerDisconnected: false,
     messages: {},
     dmMessages: {},
     dmUnreadCounts: {},

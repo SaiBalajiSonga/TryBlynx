@@ -228,6 +228,11 @@ func handleChatJoin(c *Client, payload json.RawMessage) {
 	// Build Redis channel key
 	roomKey := "chat:room:" + p.RoomID
 
+	// Idempotency: Prevent double-joining on the same connection
+	if c.joinedRooms[roomKey] {
+		return
+	}
+
 	// Request the Hub to register this client in the room
 	// (synchronous via Done channel to ensure room is ready
 	// before we return to the ReadPump)

@@ -45,10 +45,8 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState<string>('');
   const [replyTo, setReplyTo] = useState<import('../store/chatStore').ChatMessage | null>(null);
+  const [msgToDelete, setMsgToDelete] = useState<import('../store/chatStore').ChatMessage | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
-
-  // Track which rooms we've joined so we don't double-join
-  const joinedRooms = useRef<Set<string>>(new Set());
 
   // FIX: Read messages directly from chatStore (populated by WS handler)
   // instead of maintaining a separate local state that drifts out of sync
@@ -82,25 +80,16 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
   // When active group changes or WS reconnects: join WS room + load REST history + load members
   useEffect(() => {
     if (!id || wsStatus !== 'connected') {
-      if (id && joinedRooms.current.has(id)) {
-        joinedRooms.current.delete(id);
-      }
+      setMembers([]); // Clear old members when disconnected or no group selected
       return;
     }
 
-    // Clear old members immediately so the UI doesn't look stuck on previous group
-    setMembers([]);
-
-    // Join room via WS (idempotent on backend, but skip if already joined this session)
-    if (!joinedRooms.current.has(id)) {
-      sendMessage('chat.join', { room_id: id });
-      joinedRooms.current.add(id);
-    }
+    // Join room via WS. Backend handles idempotency.
+    sendMessage('chat.join', { room_id: id });
 
     // Leave room when navigating away
     return () => {
       sendMessage('chat.leave', { room_id: id });
-      joinedRooms.current.delete(id);
     };
   }, [id, sendMessage, wsStatus]);
 
@@ -172,11 +161,10 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
     setEditBody('');
   };
 
-  const handleDelete = (msgId: string) => {
-    if (!id) return;
-    if (confirm('Are you sure you want to delete this message?')) {
-      sendMessage('chat.delete', { room_id: id, message_id: msgId });
-    }
+  const confirmDelete = () => {
+    if (!id || !msgToDelete) return;
+    sendMessage('chat.delete', { room_id: id, message_id: msgToDelete.message_id });
+    setMsgToDelete(null);
   };
 
   const activeGroup = groups.find(g => g.id === id);
@@ -412,10 +400,7 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
                             </div>
                           ) : (
                             <>
-                              <MarkdownRenderer content={actualBody} />
-                              {msg.is_edited && (
-                                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>(edited)</span>
-                              )}
+                              <MarkdownRenderer content={actualBody} edited={msg.is_edited} />
                             </>
                           )}
                         </div>
@@ -463,7 +448,13 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
                                 <Pencil size={16} />
                               </button>
                               <button
-                                onClick={() => handleDelete(msg.message_id)}
+                                onClick={(e) => {
+                                  if (e.shiftKey && id) {
+                                    sendMessage('chat.delete', { room_id: id, message_id: msg.message_id });
+                                  } else {
+                                    setMsgToDelete(msg);
+                                  }
+                                }}
                                 style={{
                                   background: 'transparent', border: 'none', borderLeft: '1px solid var(--border)',
                                   padding: '4px 8px', cursor: 'pointer', color: '#ed4245',
@@ -471,7 +462,7 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
                                 }}
                                 onMouseEnter={e => { e.currentTarget.style.background = '#ed4245'; e.currentTarget.style.color = 'white'; }}
                                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#ed4245'; }}
-                                title="Delete"
+                                title="Delete (Hold Shift to bypass)"
                               >
                                 <Trash2 size={16} />
                               </button>
@@ -547,9 +538,14 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
                 <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px', cursor: 'pointer', transition: 'background 0.1s', marginBottom: '2px' }}
                   onMouseEnter={e => e.currentTarget.style.background = 'var(--blynx-800)'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  onClick={() => onUserClick && onUserClick(m.id)}
                 >
-                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--blynx-700)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '12px', flexShrink: 0 }}>
-                    {(m.display_name || m.username || 'U').charAt(0).toUpperCase()}
+                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--blynx-700)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '12px', flexShrink: 0, overflow: 'hidden' }}>
+                    {m.avatar_url ? (
+                      <img src={m.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      (m.display_name || m.username || 'U').charAt(0).toUpperCase()
+                    )}
                   </div>
                   <span style={{ color: m.is_vip ? '#faa61a' : 'var(--text-secondary)', fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                     {m.display_name || m.username}
@@ -577,6 +573,62 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
             navigate('/app/groups'); // Kick them out of the deleted group
           }}
         />
+      )}
+
+      {msgToDelete && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setMsgToDelete(null)}>
+          <div style={{ width: '460px', background: 'var(--blynx-850)', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: '24px 24px 16px' }}>
+              <h2 style={{ margin: '0 0 16px', fontSize: '20px', fontWeight: 600, color: 'white' }}>Delete Message</h2>
+              <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '15px' }}>
+                Are you sure you want to delete this message?
+              </p>
+              
+              <div style={{ marginTop: '16px', padding: '12px', background: 'var(--blynx-900)', borderRadius: '4px', border: '1px solid var(--border)', display: 'flex', gap: '12px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--blynx-700)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '16px', overflow: 'hidden', flexShrink: 0 }}>
+                  {members.find(m => m.id === msgToDelete.sender_id)?.avatar_url ? (
+                    <img src={members.find(m => m.id === msgToDelete.sender_id)?.avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+                  ) : (
+                    (msgToDelete.sender_name || 'U').charAt(0).toUpperCase()
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '2px' }}>
+                    <span style={{ fontSize: '15px', fontWeight: 500, color: 'white' }}>{msgToDelete.sender_name}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{new Date(msgToDelete.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  <div style={{ color: '#dcddde', fontSize: '15px', lineHeight: '22px', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+                    <MarkdownRenderer content={parseMessageBody(msgToDelete.body).actualBody} edited={msgToDelete.is_edited} />
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div style={{ padding: '16px 24px', background: 'var(--blynx-900)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                <strong style={{ color: 'white' }}>PROTIP:</strong> You can hold down <strong>Shift</strong> when clicking delete to bypass this dialog entirely.
+              </div>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button 
+                  onClick={() => setMsgToDelete(null)}
+                  style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', padding: '10px 24px', fontSize: '14px', fontWeight: 500 }}
+                  onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                  onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={confirmDelete}
+                  style={{ background: '#ed4245', border: 'none', color: 'white', cursor: 'pointer', padding: '10px 24px', borderRadius: '4px', fontSize: '14px', fontWeight: 500, transition: 'background 0.1s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#c9383b'}
+                  onMouseLeave={e => e.currentTarget.style.background = '#ed4245'}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

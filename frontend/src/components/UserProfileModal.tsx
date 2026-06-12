@@ -23,6 +23,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
   const [friendStatus, setFriendStatus] = useState<FriendStatus>('none');
   const [friendLoading, setFriendLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [isFullscreenAvatar, setIsFullscreenAvatar] = useState(false);
 
   const isOwnProfile = userId === currentUser?.id;
 
@@ -111,6 +112,20 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
   const bannerColor = `hsl(${Math.abs(hash) % 360}, 55%, 38%)`;
   const initials = (user.display_name || user.username || 'U').charAt(0).toUpperCase();
 
+  if (isFullscreenAvatar && user.avatar_url) {
+    return (
+      <div 
+        style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.65)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backdropFilter: 'blur(6px)' }}
+        onClick={() => setIsFullscreenAvatar(false)}
+      >
+        <img src={user.avatar_url} alt="" style={{ maxWidth: '90vw', maxHeight: '90vh', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }} />
+        <button style={{ position: 'absolute', top: 24, right: 24, background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '8px', borderRadius: '50%', cursor: 'pointer', display: 'flex' }}>
+          <X size={24} />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
       <div style={{ width: '360px', background: 'var(--blynx-850)', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 16px 48px rgba(0,0,0,0.6)', position: 'relative' }} onClick={e => e.stopPropagation()}>
@@ -124,7 +139,10 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
 
         {/* Avatar */}
         <div style={{ position: 'absolute', top: '66px', left: '16px', borderRadius: '50%', background: 'var(--blynx-850)', padding: '5px' }}>
-          <div style={{ width: '76px', height: '76px', borderRadius: '50%', background: 'var(--blynx-700)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '30px', fontWeight: 700, color: 'white', overflow: 'hidden' }}>
+          <div 
+            onClick={() => { if (user.avatar_url) setIsFullscreenAvatar(true); }}
+            style={{ width: '76px', height: '76px', borderRadius: '50%', background: 'var(--blynx-700)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '30px', fontWeight: 700, color: 'white', overflow: 'hidden', cursor: user.avatar_url ? 'pointer' : 'default' }}
+          >
             {user.avatar_url
               ? <img src={user.avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
               : initials}
