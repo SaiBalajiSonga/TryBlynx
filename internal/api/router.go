@@ -148,6 +148,10 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 		// Stripe Checkout (creates payment session)
 		r.Post("/api/checkout", s.CreateCheckoutHandler)
 
+		// E2EE Key Backup
+		r.Get("/api/key-backup", s.GetKeyBackupHandler)
+		r.Put("/api/key-backup", s.SaveKeyBackupHandler)
+
 		// Admin Group Management
 		r.Post("/api/admin/groups", s.AdminCreateGroupHandler)
 		r.Put("/api/admin/groups/{id}", s.AdminUpdateGroupHandler)
