@@ -7,8 +7,8 @@ import { useLocation, useNavigate, Routes, Route, Navigate } from 'react-router-
 import {
   Menu, Bell, MessageSquare, Zap, Crown, LogOut, Settings,
   Home as HomeIcon, Video, Users, Search as SearchIcon, Shield, Star,
-  Terminal, UserPlus, Check, UserCircle,
-  Clipboard, UserCheck,
+  Terminal, Check, UserCircle,
+  Clipboard,
 } from 'lucide-react';
 import { SettingsView } from './Settings';
 import { Home } from './Home';
@@ -21,7 +21,6 @@ import { UserProfileModal } from './UserProfileModal';
 import { FriendsModal } from './FriendsModal';
 import { ModLog } from './ModLog';
 import { useWebSocket } from '../lib/useWebSocket';
-import { api } from '../lib/api';
 import { ToastContainer } from './ToastContainer';
 
 function getSavedSidebarState(): boolean {

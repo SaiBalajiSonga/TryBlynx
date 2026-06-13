@@ -7,9 +7,29 @@ import React from 'react';
 import { KeyBackupModal } from './KeyBackupModal';
 
 export function SettingsView() {
-  const { user, updateUser } = useAuthStore();
+  const { user, updateUser, clearAuth } = useAuthStore();
   const [displayName, setDisplayName] = useState(user?.display_name || '');
   const [showKeyBackup, setShowKeyBackup] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== 'deletemyaccount') {
+      setDeleteError('Please type "deletemyaccount" exactly to confirm.');
+      return;
+    }
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await api.deleteAccount();
+      clearAuth();
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete account. Try again.');
+      setDeleting(false);
+    }
+  };
   const [bio, setBio] = useState(user?.bio || '');
   const [gender, setGender] = useState(user?.gender || '');
   const [interests, setInterests] = useState<string[]>(user?.interests || []);
@@ -276,6 +296,50 @@ export function SettingsView() {
       </div>
     </div>
     {showKeyBackup && <KeyBackupModal onClose={() => setShowKeyBackup(false)} />}
+    {showDeleteAccount && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(6px)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+        <div style={{ width: '100%', maxWidth: '420px', background: 'var(--blynx-850)', borderRadius: '16px', border: '1px solid rgba(237,66,69,0.3)', boxShadow: '0 24px 64px rgba(0,0,0,0.6)', padding: '28px', animation: 'fade-in 0.2s ease' }}>
+          <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(237,66,69,0.12)', border: '1px solid rgba(237,66,69,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
+            <span style={{ fontSize: '22px' }}>⚠️</span>
+          </div>
+          <h2 style={{ margin: '0 0 8px', fontSize: '20px', fontWeight: 700, color: 'white' }}>Delete Account</h2>
+          <p style={{ margin: '0 0 20px', fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            This will <strong style={{ color: '#ed4245' }}>permanently delete</strong> your account, all your messages, and all your data. This cannot be undone.
+          </p>
+          <div style={{ background: 'rgba(237,66,69,0.06)', border: '1px solid rgba(237,66,69,0.15)', borderRadius: '10px', padding: '14px', marginBottom: '18px' }}>
+            <p style={{ margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+              Type <strong style={{ color: 'white', fontFamily: 'monospace' }}>deletemyaccount</strong> to confirm:
+            </p>
+            <input
+              type="text"
+              value={deleteConfirmText}
+              onChange={e => setDeleteConfirmText(e.target.value)}
+              placeholder="deletemyaccount"
+              autoComplete="off"
+              style={{ width: '100%', background: 'var(--blynx-750)', border: `1px solid ${deleteConfirmText === 'deletemyaccount' ? 'rgba(74,222,128,0.4)' : 'var(--border)'}`, borderRadius: '8px', padding: '10px 12px', color: 'white', fontSize: '14px', outline: 'none', fontFamily: 'monospace', boxSizing: 'border-box' }}
+            />
+          </div>
+          {deleteError && (
+            <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#ed4245', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              ⚠️ {deleteError}
+            </p>
+          )}
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button onClick={() => setShowDeleteAccount(false)} style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--blynx-700)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '14px', fontWeight: 600, fontFamily: 'inherit' }}>
+              Cancel
+            </button>
+            <button
+              onClick={handleDeleteAccount}
+              disabled={deleting || deleteConfirmText !== 'deletemyaccount'}
+              style={{ flex: 1, padding: '11px', borderRadius: '8px', border: 'none', background: deleteConfirmText === 'deletemyaccount' ? '#ed4245' : 'rgba(237,66,69,0.2)', color: deleteConfirmText === 'deletemyaccount' ? 'white' : 'rgba(237,66,69,0.5)', cursor: deleteConfirmText === 'deletemyaccount' && !deleting ? 'pointer' : 'not-allowed', fontSize: '14px', fontWeight: 700, fontFamily: 'inherit', transition: 'all 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+            >
+              {deleting ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : '🗑️'}
+              {deleting ? 'Deleting…' : 'Delete Forever'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 }

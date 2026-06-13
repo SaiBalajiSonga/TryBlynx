@@ -119,9 +119,16 @@ export const api = {
   // ── Stripe ───────────────────────────────────────────────────
   createCheckout: () =>
     fetchWithAuth('/checkout', { method: 'POST' }),
+
+  deleteAccount: () =>
+    fetchWithAuth('/account/delete', { method: 'DELETE' }),
 };
 
 // Key backup endpoints (passphrase-encrypted private key blob)
 export const saveKeyBackup = (blob: string) =>
   fetchWithAuth('/key-backup', { method: 'PUT', body: JSON.stringify({ blob }) });
 export const getKeyBackup = () => fetchWithAuth('/key-backup');
+
+// Account deletion
+export const deleteAccountApi = () =>
+  fetchWithAuth('/account/delete', { method: 'DELETE' });

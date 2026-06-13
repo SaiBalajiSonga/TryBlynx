@@ -69,13 +69,11 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
       .finally(() => setLoadingGroups(false));
   }, [id, navigate]);
 
-  // Fetch groups list and poll for member count updates
+  // Fetch groups list once on mount
   useEffect(() => {
-
     fetchGroups();
-    const groupPoll = setInterval(fetchGroups, 3_000);
-    return () => clearInterval(groupPoll);
-  }, [id, navigate]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // When active group changes or WS reconnects: join WS room + load REST history + load members
   useEffect(() => {
@@ -100,9 +98,15 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
     const fetchMembers = () => {
       api.getGroupMembers(id)
         .then(res => {
-          const mems = res.members || [];
+          // FIX: Deduplicate by id before setting state — polling can return
+          // the same user twice if the backend AutoJoin runs concurrently
+          const seen = new Set<string>();
+          const mems = (res.members || []).filter((m: any) => {
+            if (seen.has(m.id)) return false;
+            seen.add(m.id);
+            return true;
+          });
           setMembers(mems);
-          // Instantly sync the sidebar count for the active group
           setGroups(prev => prev.map(g => g.id === id ? { ...g, member_count: mems.length } : g));
         })
         .catch(err => console.error('Failed to load members:', err));
@@ -137,7 +141,7 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
       });
 
     // Polling so members list stays fresh without page refresh
-    const memberPoll = setInterval(fetchMembers, 3_000);
+    const memberPoll = setInterval(fetchMembers, 15_000);
     return () => clearInterval(memberPoll);
   }, [id, sendMessage]);
 

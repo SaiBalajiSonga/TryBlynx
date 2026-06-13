@@ -1467,3 +1467,10 @@ func (s *Store) GetKeyBackup(ctx context.Context, userID uuid.UUID) (string, err
 	}
 	return blob, nil
 }
+
+// DeleteUser permanently removes a user and all their associated data.
+// Cascades handle messages, conversations, friends, etc via FK constraints.
+func (s *Store) DeleteUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := s.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	return err
+}

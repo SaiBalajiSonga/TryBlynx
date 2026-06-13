@@ -54,29 +54,32 @@ export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator
     e.preventDefault();
     if (!chatInput.trim() || !activeRoomId) return;
     const send = getSendMessage();
-    send?.('match.message', { peer_id: peerId, room_id: activeRoomId, body: chatInput.trim() });
+    send?.('chat.message', { room_id: activeRoomId, body: chatInput.trim() });
     setChatInput('');
   };
 
   useEffect(() => {
-    if (localVideoRef.current && !isVideoOff) {
-      // Start AI moderation on the local video stream
-      const cleanup = startVideoModeration(localVideoRef.current, (predictions) => {
-        console.warn('Inappropriate behavior detected!', predictions);
-        reportAIStrike();
-        endVideo();
-      });
-      return cleanup;
-    }
-  }, [localVideoRef.current, isVideoOff, endVideo]);
+    // FIX: Don't use ref.current in deps — refs don't trigger re-renders.
+    // Instead, run when isVideoOff changes and check ref inside.
+    if (isVideoOff) return;
+    const videoEl = localVideoRef.current;
+    if (!videoEl) return;
+    const cleanup = startVideoModeration(videoEl, (predictions) => {
+      console.warn('Inappropriate behavior detected!', predictions);
+      reportAIStrike();
+      endVideo();
+    });
+    return cleanup;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVideoOff]);
 
   const stateColor = {
-    connected: 'var(--teal)',
-    connecting: 'var(--yellow)',
-    new: 'var(--yellow)',
-    disconnected: 'var(--red)',
-    failed: 'var(--red)',
-    closed: 'var(--red)',
+    connected: '#4ade80',
+    connecting: '#fbbf24',
+    new: '#fbbf24',
+    disconnected: '#f87171',
+    failed: '#f87171',
+    closed: '#f87171',
   }[connectionState] ?? 'var(--text-muted)';
 
   return (
