@@ -10,6 +10,7 @@ import {
   storePrivateKey, loadPrivateKey,
 } from '../lib/crypto';
 import { getSendMessage } from '../lib/useWebSocket';
+import { usePresenceStore } from '../store/presenceStore';
 
 // Stable fallback — prevents Zustand getSnapshot infinite loop
 const EMPTY_WS_MSGS: import('../store/chatStore').DMMessage[] = [];
@@ -20,6 +21,8 @@ export function DMs() {
   const user = useAuthStore(s => s.user);
   const updateUser = useAuthStore(s => s.updateUser);
   const clearDMUnread = useChatStore((s) => s.clearDMUnread);
+  const onlineUsers = usePresenceStore(s => s.onlineUsers);
+  const lastActiveMap = usePresenceStore(s => s.lastActiveMap);
 
   // Clear unread count when we visit the chat
   useEffect(() => {
@@ -94,6 +97,11 @@ export function DMs() {
       .then(res => {
         const chats = res.conversations || [];
         setDms(chats);
+        usePresenceStore.getState().initializePresence(chats.map((c: any) => ({
+          id: c.peer_id,
+          is_online: c.is_online,
+          last_active_at: c.last_active_at
+        })));
         if (!id && chats.length > 0) navigate(`/app/dms/${chats[0].id}`, { replace: true });
       })
       .catch(err => console.error('[DMs] Failed to load list:', err))
@@ -148,7 +156,14 @@ export function DMs() {
       setDms((currentDms) => {
         const chat = currentDms.find(c => c.id === id);
         if (chat && !chat.peer_public_key) {
-          api.getDMs().then(res => setDms(res.conversations || []));
+          api.getDMs().then(res => {
+            setDms(res.conversations || []);
+            usePresenceStore.getState().initializePresence((res.conversations || []).map((c: any) => ({
+              id: c.peer_id,
+              is_online: c.is_online,
+              last_active_at: c.last_active_at
+            })));
+          });
         }
         return currentDms;
       });
@@ -240,6 +255,18 @@ export function DMs() {
   const myHasKey = !!user?.public_key;
   const isE2EE = peerHasKey && myHasKey;
 
+  const timeAgo = (dateStr: string) => {
+    if (!dateStr) return '';
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  };
+
   return (
     <div style={{ flex: 1, display: 'flex', background: 'var(--blynx-900)', overflow: 'hidden' }}>
 
@@ -274,8 +301,13 @@ export function DMs() {
                 onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--blynx-800)'; }}
                 onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
               >
-                <div style={{ width: '38px', height: '38px', borderRadius: '50%', flexShrink: 0, marginRight: '10px', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '15px', overflow: 'hidden' }}>
-                  {chat.peer_avatar ? <img src={chat.peer_avatar} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : (chat.peer_name || 'U').charAt(0).toUpperCase()}
+                <div style={{ position: 'relative', width: '38px', height: '38px', flexShrink: 0, marginRight: '10px' }}>
+                  <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '15px', overflow: 'hidden' }}>
+                    {chat.peer_avatar ? <img src={chat.peer_avatar} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : (chat.peer_name || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  {onlineUsers.has(chat.peer_id) && (
+                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: '10px', height: '10px', background: '#4ade80', borderRadius: '50%', border: '2px solid var(--blynx-850)' }} />
+                  )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
@@ -305,10 +337,25 @@ export function DMs() {
             {/* Header */}
             <div style={{ height: '52px', padding: '0 16px', borderBottom: '1px solid var(--border)', background: 'var(--blynx-850)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '13px', overflow: 'hidden' }}>
-                  {activeChat.peer_avatar ? <img src={activeChat.peer_avatar} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : (activeChat.peer_name || 'U').charAt(0).toUpperCase()}
+                <div style={{ position: 'relative', width: '32px', height: '32px' }}>
+                  <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '13px', overflow: 'hidden' }}>
+                    {activeChat.peer_avatar ? <img src={activeChat.peer_avatar} alt="" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : (activeChat.peer_name || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  {onlineUsers.has(activeChat.peer_id) && (
+                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: '10px', height: '10px', background: '#4ade80', borderRadius: '50%', border: '2px solid var(--blynx-850)' }} />
+                  )}
                 </div>
-                <span style={{ fontWeight: 700, fontSize: '14px', color: 'white' }}>{activeChat.peer_name}</span>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontWeight: 700, fontSize: '14px', color: 'white' }}>{activeChat.peer_name}</span>
+                  {!onlineUsers.has(activeChat.peer_id) && lastActiveMap.has(activeChat.peer_id) && (
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Active {timeAgo(lastActiveMap.get(activeChat.peer_id)!)}
+                    </span>
+                  )}
+                  {onlineUsers.has(activeChat.peer_id) && (
+                    <span style={{ fontSize: '11px', color: '#4ade80' }}>Online</span>
+                  )}
+                </div>
                 {/* E2EE status badge */}
                 <div
                   title={isE2EE ? 'Messages in this conversation are end-to-end encrypted. TryBlynx cannot read them.' : 'End-to-end encryption not available — the other person needs to open their DMs first.'}

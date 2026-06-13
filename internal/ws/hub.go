@@ -34,6 +34,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -264,6 +265,17 @@ func (h *Hub) handleRegister(client *Client) {
 	}
 	h.clients[client.UserID][client] = true
 
+	// Increment global presence count
+	wentOnline, err := h.Store.AddGlobalPresence(context.Background(), client.UserID)
+	if err != nil {
+		log.Printf("ws-hub: failed to add global presence: %v", err)
+	}
+
+	if wentOnline {
+		// Broadcast to friends that user went online
+		h.broadcastPresenceUpdate(client.UserID, true)
+	}
+
 	total := 0
 	for _, conns := range h.clients {
 		total += len(conns)
@@ -289,6 +301,20 @@ func (h *Hub) handleUnregister(client *Client) {
 
 	if len(conns) == 0 {
 		delete(h.clients, client.UserID)
+
+		// Decrement global presence count
+		wentOffline, err := h.Store.RemoveGlobalPresence(context.Background(), client.UserID)
+		if err != nil {
+			log.Printf("ws-hub: failed to remove global presence: %v", err)
+		}
+
+		if wentOffline {
+			// Update last active in DB
+			_ = h.Store.UpdateLastActive(context.Background(), client.UserID)
+
+			// Broadcast to friends that user went offline
+			h.broadcastPresenceUpdate(client.UserID, false)
+		}
 	}
 
 	total := 0
@@ -297,6 +323,38 @@ func (h *Hub) handleUnregister(client *Client) {
 	}
 	log.Printf("ws-hub: unregistered client for user %s [remaining conns: %d, total: %d]",
 		client.UserID, len(h.clients[client.UserID]), total)
+}
+
+// broadcastPresenceUpdate sends a presence WS event to all connected friends of a user.
+func (h *Hub) broadcastPresenceUpdate(userID uuid.UUID, online bool) {
+	// 1. Fetch friends from DB
+	friends, err := h.Store.GetFriends(context.Background(), userID)
+	if err != nil {
+		return
+	}
+
+	// 2. Prepare payload
+	payload, _ := json.Marshal(map[string]interface{}{
+		"type": "presence.update",
+		"payload": map[string]interface{}{
+			"user_id": userID,
+			"online":  online,
+			"last_active_at": time.Now(),
+		},
+	})
+
+	// 3. Send to each friend if they are connected
+	for _, f := range friends {
+		// f is FriendWithProfile. Get the peer ID
+		var friendID uuid.UUID
+		if f.RequesterID == userID {
+			friendID = f.AddresseeID
+		} else {
+			friendID = f.RequesterID
+		}
+
+		h.SendToUser(friendID, payload)
+	}
 }
 
 // handleJoinRoom adds a client to a room. If this is the first

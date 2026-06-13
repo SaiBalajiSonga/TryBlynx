@@ -245,6 +245,17 @@ func (s *Store) UpdateUserFingerprint(ctx context.Context, id uuid.UUID, fingerp
 	return err
 }
 
+// UpdateLastActive updates the last_active_at timestamp for a user.
+func (s *Store) UpdateLastActive(ctx context.Context, id uuid.UUID) error {
+	query := `
+		UPDATE users
+		SET last_active_at = NOW()
+		WHERE id = $1
+	`
+	_, err := s.Pool.Exec(ctx, query, id)
+	return err
+}
+
 // LogUserStrike increments a user's strike count and issues an escalating ban.
 func (s *Store) LogUserStrike(ctx context.Context, id uuid.UUID) (*time.Time, error) {
 	tx, err := s.Pool.Begin(ctx)
@@ -775,7 +786,8 @@ func (s *Store) GetUserDMs(ctx context.Context, userID uuid.UUID) ([]DMConversat
 			u.id AS peer_id,
 			COALESCE(NULLIF(u.display_name, ''), u.username) AS peer_name,
 			COALESCE(u.avatar_url, '') AS peer_avatar,
-			COALESCE(u.public_key, '') AS peer_public_key
+			COALESCE(u.public_key, '') AS peer_public_key,
+			u.last_active_at
 		FROM conversations c
 		JOIN conversation_members cm1 ON cm1.conversation_id = c.id AND cm1.user_id = $1
 		JOIN conversation_members cm2 ON cm2.conversation_id = c.id AND cm2.user_id != $1
@@ -798,6 +810,7 @@ func (s *Store) GetUserDMs(ctx context.Context, userID uuid.UUID) ([]DMConversat
 			&dm.ID, &dm.Type, &dm.CreatedAt,
 			&dm.LastMessage, &dm.LastMessageAt,
 			&dm.PeerID, &dm.PeerName, &dm.PeerAvatar, &dm.PeerPublicKey,
+			&dm.LastActiveAt,
 		); err != nil {
 			return nil, fmt.Errorf("db: failed to scan user DM: %w", err)
 		}
@@ -1082,7 +1095,8 @@ func (s *Store) GetFriends(ctx context.Context, userID uuid.UUID) ([]models.Frie
 			u.id AS peer_id,
 			u.username AS peer_username,
 			COALESCE(NULLIF(u.display_name,''), u.username) AS peer_name,
-			COALESCE(u.avatar_url, '') AS peer_avatar
+			COALESCE(u.avatar_url, '') AS peer_avatar,
+			u.last_active_at
 		FROM friendships f
 		JOIN users u ON u.id = CASE
 			WHEN f.requester_id = $1 THEN f.addressee_id
@@ -1103,7 +1117,7 @@ func (s *Store) GetFriends(ctx context.Context, userID uuid.UUID) ([]models.Frie
 		var fw models.FriendWithProfile
 		if err := rows.Scan(
 			&fw.ID, &fw.RequesterID, &fw.AddresseeID, &fw.Status, &fw.CreatedAt, &fw.UpdatedAt,
-			&fw.PeerID, &fw.PeerUsername, &fw.PeerName, &fw.PeerAvatar,
+			&fw.PeerID, &fw.PeerUsername, &fw.PeerName, &fw.PeerAvatar, &fw.LastActiveAt,
 		); err != nil {
 			return nil, fmt.Errorf("db: scan friend: %w", err)
 		}

@@ -98,6 +98,8 @@ type ConversationSummary struct {
 	Conversation
 	LastMessage   string     `json:"last_message,omitempty"`
 	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	IsOnline      bool       `json:"is_online,omitempty"`
+	LastActiveAt  *time.Time `json:"last_active_at,omitempty"`
 }
 
 // Message represents a single text message within a conversation.
@@ -148,10 +150,12 @@ type Friendship struct {
 // Returned by GET /api/friends for the full friends list with avatars.
 type FriendWithProfile struct {
 	Friendship
-	PeerID       uuid.UUID `json:"peer_id"`
-	PeerUsername string    `json:"peer_username"`
-	PeerName     string    `json:"peer_name"`
-	PeerAvatar   string    `json:"peer_avatar"`
+	PeerID       uuid.UUID  `json:"peer_id"`
+	PeerUsername string     `json:"peer_username"`
+	PeerName     string     `json:"peer_name"`
+	PeerAvatar   string     `json:"peer_avatar"`
+	IsOnline     bool       `json:"is_online,omitempty"`
+	LastActiveAt *time.Time `json:"last_active_at,omitempty"`
 }
 
 // FriendRequest represents a pending incoming friend request with actor info.

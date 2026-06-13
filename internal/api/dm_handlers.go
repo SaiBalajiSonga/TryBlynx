@@ -45,6 +45,17 @@ func (s *Server) ListDMsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	peerIDs := make([]uuid.UUID, len(dms))
+	for i, dm := range dms {
+		peerIDs[i] = dm.PeerID
+	}
+	onlineStatus, _ := s.Store.GetGlobalPresenceUsers(r.Context(), peerIDs)
+	for i := range dms {
+		if onlineStatus[dms[i].PeerID] {
+			dms[i].IsOnline = true
+		}
+	}
+
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"conversations": dms,
 		"count":         len(dms),

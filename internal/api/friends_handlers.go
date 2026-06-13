@@ -225,6 +225,10 @@ func (s *Server) AcceptFriendRequestHandler(w http.ResponseWriter, r *http.Reque
 	s.pushWSEvent(requesterID, "friend_request_handled", map[string]interface{}{
 		"friendship_id": friendship.ID,
 	})
+	// Push event to caller's other sessions to stay in sync
+	s.pushWSEvent(callerID, "friend_request_handled", map[string]interface{}{
+		"friendship_id": friendship.ID,
+	})
 
 	respondJSON(w, http.StatusOK, friendship)
 }
@@ -251,6 +255,10 @@ func (s *Server) DeclineFriendRequestHandler(w http.ResponseWriter, r *http.Requ
 
 	// Push event to update requester's pending badge
 	s.pushWSEvent(requesterID, "friend_request_handled", map[string]interface{}{
+		"actor_id": callerID,
+	})
+	// Push event to caller's other sessions to stay in sync
+	s.pushWSEvent(callerID, "friend_request_handled", map[string]interface{}{
 		"actor_id": callerID,
 	})
 
@@ -292,6 +300,15 @@ func (s *Server) CancelFriendRequestHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Push event to update addressee's pending badge
+	s.pushWSEvent(targetID, "friend_request_handled", map[string]interface{}{
+		"actor_id": callerID,
+	})
+	// Push event to caller's other sessions to stay in sync
+	s.pushWSEvent(callerID, "friend_request_handled", map[string]interface{}{
+		"actor_id": callerID,
+	})
+
 	respondJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
 
@@ -303,6 +320,18 @@ func (s *Server) ListFriendsHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "failed to fetch friends")
 		return
 	}
+
+	friendIDs := make([]uuid.UUID, len(friends))
+	for i, f := range friends {
+		friendIDs[i] = f.PeerID
+	}
+	onlineStatus, _ := s.Store.GetGlobalPresenceUsers(r.Context(), friendIDs)
+	for i := range friends {
+		if onlineStatus[friends[i].PeerID] {
+			friends[i].IsOnline = true
+		}
+	}
+
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"friends": friends,
 		"count":   len(friends),

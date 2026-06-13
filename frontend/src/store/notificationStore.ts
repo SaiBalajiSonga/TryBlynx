@@ -26,12 +26,17 @@ interface NotificationState {
   markAllRead: () => Promise<void>;
   addNotification: (n: AppNotification) => void;
   setUnreadCount: (count: number) => void;
+  allRequests: any[];
   pendingFriendsCount: number;
   unseenPendingFriends: boolean;
   fetchPendingFriendsCount: () => Promise<void>;
   incrementPendingFriends: () => void;
   decrementPendingFriends: () => void;
   markPendingFriendsSeen: () => void;
+  friendRequestsVersion: number;
+  incrementFriendRequestsVersion: () => void;
+  handledActorId: string | null;
+  setHandledActorId: (id: string | null) => void;
 }
 
 export const useNotificationStore = create<NotificationState>((set) => ({
@@ -76,6 +81,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
 
   setUnreadCount: (count: number) => set({ unreadCount: count }),
 
+  allRequests: [],
   pendingFriendsCount: 0,
   unseenPendingFriends: false,
   fetchPendingFriendsCount: async () => {
@@ -84,10 +90,11 @@ export const useNotificationStore = create<NotificationState>((set) => ({
       // count only incoming requests
       const user = useAuthStore.getState().user;
       const incoming = (data.requests || []).filter((r: any) => r.addressee_id === user?.id);
-      set({ 
+      set((state) => ({ 
+        allRequests: data.requests || [],
         pendingFriendsCount: incoming.length,
-        unseenPendingFriends: incoming.length > 0
-      });
+        unseenPendingFriends: incoming.length > state.pendingFriendsCount ? true : (incoming.length === 0 ? false : state.unseenPendingFriends)
+      }));
     } catch {}
   },
   incrementPendingFriends: () => set(state => ({ 
@@ -98,4 +105,8 @@ export const useNotificationStore = create<NotificationState>((set) => ({
     pendingFriendsCount: Math.max(0, state.pendingFriendsCount - 1) 
   })),
   markPendingFriendsSeen: () => set({ unseenPendingFriends: false }),
+  friendRequestsVersion: 0,
+  incrementFriendRequestsVersion: () => set(state => ({ friendRequestsVersion: state.friendRequestsVersion + 1 })),
+  handledActorId: null,
+  setHandledActorId: (id) => set({ handledActorId: id }),
 }));

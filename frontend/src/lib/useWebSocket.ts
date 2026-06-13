@@ -3,6 +3,7 @@ import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
 import { useWebRTCStore } from '../store/webrtcStore';
 import { useNotificationStore } from '../store/notificationStore';
+import { usePresenceStore } from '../store/presenceStore';
 import { useUIStore } from '../store/uiStore';
 import { useNavigate } from 'react-router-dom';
 import { isEncrypted, loadPrivateKey, decryptMessage } from './crypto';
@@ -113,13 +114,27 @@ export function useWebSocket() {
       }
       case 'friend_request_received':
         useNotificationStore.getState().incrementPendingFriends();
+        useNotificationStore.getState().incrementFriendRequestsVersion();
+        useNotificationStore.getState().fetchPendingFriendsCount();
         break;
       case 'friend_request_handled':
         // When someone accepts/declines our request, our pending count should decrease
         useNotificationStore.getState().decrementPendingFriends();
+        useNotificationStore.getState().incrementFriendRequestsVersion();
+        useNotificationStore.getState().fetchPendingFriendsCount();
+        if (data.payload?.actor_id) {
+          useNotificationStore.getState().setHandledActorId(data.payload.actor_id);
+        }
         break;
       case 'error':
         console.error('WS server error:', data.payload?.message);
+        break;
+      case 'presence.update':
+        usePresenceStore.getState().setOnline(
+          data.payload.user_id,
+          data.payload.online,
+          data.payload.last_active_at
+        );
         break;
       case 'webrtc.offer':
       case 'webrtc.answer':
