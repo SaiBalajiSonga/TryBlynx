@@ -973,6 +973,11 @@ func (s *Store) SendFriendRequest(ctx context.Context, requesterID, addresseeID 
 	if existingStatus == "blocked" {
 		return nil, fmt.Errorf("db: blocked relationship exists")
 	}
+	if existingStatus == "accepted" || existingStatus == "pending" {
+		// Prevent creating a duplicate row in the other direction.
+		// (We return an error string that triggers the 409 Conflict handler in the API)
+		return nil, fmt.Errorf("db: unique constraint violation: relationship already exists")
+	}
 
 	var f models.Friendship
 	err = s.Pool.QueryRow(ctx, `
