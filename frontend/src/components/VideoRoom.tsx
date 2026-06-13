@@ -5,7 +5,7 @@ import { useChatStore } from '../store/chatStore';
 import { useAuthStore } from '../store/authStore';
 import { getSendMessage } from '../lib/useWebSocket';
 import { api } from '../lib/api';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, AlertCircle, Wifi, Send } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, AlertCircle, Wifi, Send, Loader } from 'lucide-react';
 import { startVideoModeration, reportAIStrike } from '../lib/videoModeration';
 
 const EMPTY_MESSAGES: import('../store/chatStore').ChatMessage[] = [];
@@ -22,7 +22,10 @@ export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator
   const [chatInput, setChatInput] = useState('');
   const [isPipHovered, setIsPipHovered] = useState(false);
   const [peerProfile, setPeerProfile] = useState<any>(null);
+  const [remoteLoaded, setRemoteLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // NSFWJS cleanup ref — stores the cleanup fn from startVideoModeration
+  const moderationCleanupRef = useRef<(() => void) | null>(null);
 
   const user = useAuthStore(s => s.user);
   const activeRoomId = useChatStore(s => s.activeRoomId);
@@ -59,17 +62,26 @@ export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator
   };
 
   useEffect(() => {
-    // FIX: Don't use ref.current in deps — refs don't trigger re-renders.
-    // Instead, run when isVideoOff changes and check ref inside.
-    if (isVideoOff) return;
+    // Bug fix #11: Cancel previous moderation session before starting a new one
+    // to prevent memory leaks when video is toggled off/on.
+    if (isVideoOff) {
+      moderationCleanupRef.current?.();
+      moderationCleanupRef.current = null;
+      return;
+    }
     const videoEl = localVideoRef.current;
     if (!videoEl) return;
+    moderationCleanupRef.current?.(); // cancel any existing session
     const cleanup = startVideoModeration(videoEl, (predictions) => {
       console.warn('Inappropriate behavior detected!', predictions);
       reportAIStrike();
       endVideo();
     });
-    return cleanup;
+    moderationCleanupRef.current = cleanup ?? null;
+    return () => {
+      moderationCleanupRef.current?.();
+      moderationCleanupRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVideoOff]);
 
@@ -143,8 +155,33 @@ export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator
               ref={remoteVideoRef}
               autoPlay
               playsInline
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              onLoadedMetadata={() => setRemoteLoaded(true)}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: remoteLoaded ? 1 : 0, transition: 'opacity 0.3s' }}
             />
+            {/* Loading placeholder while remote video hasn't loaded */}
+            {!remoteLoaded && (
+              <div style={{
+                position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center', gap: '14px',
+                background: '#0a0b0f',
+              }}>
+                <div style={{
+                  width: '64px', height: '64px', borderRadius: '50%',
+                  background: 'linear-gradient(135deg, var(--accent), #7289da)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '24px', fontWeight: 700, color: 'white', overflow: 'hidden',
+                }}>
+                  {peerProfile?.avatar_url
+                    ? <img src={peerProfile.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : (peerProfile?.display_name || peerProfile?.username || '?').charAt(0).toUpperCase()
+                  }
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '14px' }}>
+                  <Loader size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                  Connecting...
+                </div>
+              </div>
+            )}
 
             {/* User Details Overlay */}
             {peerProfile && (
@@ -367,6 +404,47 @@ export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator
                 </form>
               </div>
             )}
+          </div>
+          {/* Persistent bottom control bar — always visible */}
+          <div style={{
+            height: '64px', flexShrink: 0,
+            background: 'rgba(10,11,15,0.85)', backdropFilter: 'blur(10px)',
+            borderTop: '1px solid rgba(255,255,255,0.07)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px',
+          }}>
+            <ControlBtn
+              onClick={toggleMute}
+              active={isMuted}
+              activeColor="rgba(237,66,69,0.9)"
+              activeIconColor="white"
+              icon={isMuted ? MicOff : Mic}
+              label={isMuted ? 'Unmute' : 'Mute'}
+            />
+            <ControlBtn
+              onClick={toggleVideo}
+              active={isVideoOff}
+              activeColor="rgba(237,66,69,0.9)"
+              activeIconColor="white"
+              icon={isVideoOff ? VideoOff : Video}
+              label={isVideoOff ? 'Start Cam' : 'Stop Cam'}
+            />
+            <button
+              onClick={endVideo}
+              style={{
+                width: '48px', height: '48px', borderRadius: '50%',
+                border: 'none', cursor: 'pointer',
+                background: '#ed4245',
+                color: 'white',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 0 20px rgba(237,66,69,0.45)',
+                transition: 'transform 0.1s, box-shadow 0.1s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = '0 0 28px rgba(237,66,69,0.65)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 0 20px rgba(237,66,69,0.45)'; }}
+              title="End Call"
+            >
+              <PhoneOff size={18} />
+            </button>
           </div>
         </div>
       )}

@@ -79,6 +79,17 @@ export function useWebSocket() {
         }
         break;
       }
+      case 'dm.typing': {
+        // Broadcast to the DMs component via a custom event
+        window.dispatchEvent(new CustomEvent('blynx:dm-typing', {
+          detail: {
+            sender_id: data.payload.sender_id,
+            conversation_id: data.payload.conversation_id,
+            typing: data.payload.typing,
+          }
+        }));
+        break;
+      }
       case 'match.queued':
         setMatchStatus('waiting', data.payload.target_gender);
         break;
@@ -113,15 +124,15 @@ export function useWebSocket() {
         break;
       }
       case 'friend_request_received':
-        useNotificationStore.getState().incrementPendingFriends();
-        useNotificationStore.getState().incrementFriendRequestsVersion();
+        // A new incoming request arrived — just re-fetch the authoritative count (no optimistic inc to avoid double-count)
         useNotificationStore.getState().fetchPendingFriendsCount();
+        useNotificationStore.getState().incrementFriendRequestsVersion();
         break;
       case 'friend_request_handled':
-        // When someone accepts/declines our request, our pending count should decrease
-        useNotificationStore.getState().decrementPendingFriends();
-        useNotificationStore.getState().incrementFriendRequestsVersion();
+        // Someone accepted OR declined one of our outgoing requests.
+        // Re-fetch the authoritative count rather than blindly decrementing (which only applies to incoming).
         useNotificationStore.getState().fetchPendingFriendsCount();
+        useNotificationStore.getState().incrementFriendRequestsVersion();
         if (data.payload?.actor_id) {
           useNotificationStore.getState().setHandledActorId(data.payload.actor_id);
         }

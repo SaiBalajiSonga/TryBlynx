@@ -38,6 +38,11 @@ export function DMs() {
   const [newMessage, setNewMessage] = useState('');
   const [e2eeReady, setE2eeReady] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [peerIsTyping, setPeerIsTyping] = useState(false);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingSentRef = useRef(false);
+  // Guard to prevent repeated refetch on peer_public_key race
+  const keyRefetchInFlightRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -152,21 +157,20 @@ export function DMs() {
 
     // If we receive an encrypted message but our local state thinks the peer has no public key,
     // they must have just generated one. Refetch the DM list to get it!
+    // Bug #2 fix: use a ref guard so this only fires once per conversation, not on every render.
     if (isEncrypted(latest.body)) {
-      setDms((currentDms) => {
-        const chat = currentDms.find(c => c.id === id);
-        if (chat && !chat.peer_public_key) {
-          api.getDMs().then(res => {
-            setDms(res.conversations || []);
-            usePresenceStore.getState().initializePresence((res.conversations || []).map((c: any) => ({
-              id: c.peer_id,
-              is_online: c.is_online,
-              last_active_at: c.last_active_at
-            })));
-          });
-        }
-        return currentDms;
-      });
+      const chat = dms.find(c => c.id === id);
+      if (chat && !chat.peer_public_key && !keyRefetchInFlightRef.current) {
+        keyRefetchInFlightRef.current = true;
+        api.getDMs().then(res => {
+          setDms(res.conversations || []);
+          usePresenceStore.getState().initializePresence((res.conversations || []).map((c: any) => ({
+            id: c.peer_id,
+            is_online: c.is_online,
+            last_active_at: c.last_active_at
+          })));
+        }).finally(() => { keyRefetchInFlightRef.current = false; });
+      }
     }
 
     setMessages(prev => {
@@ -186,16 +190,44 @@ export function DMs() {
           if (p.some(m => m.message_id === mid)) return p;
           return [...p, { ...latest, message_id: mid, body, _encrypted: encrypted }];
         });
+        // Bug #1 fix: Update sidebar preview in real-time when a new message arrives
+        setDms(prev => prev.map(c =>
+          c.id === latest.conversation_id
+            ? { ...c, last_message: body.startsWith('{') ? '🔒 Encrypted message' : body, last_message_at: latest.created_at }
+            : c
+        ));
       })();
 
       return prev; // optimistic no-op until async completes
     });
+
+    // If peer sent a message, clear the typing indicator immediately
+    if (latest.sender_id !== user.id) {
+      setPeerIsTyping(false);
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsLen, id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, peerIsTyping]);
+
+  // Listen for typing events from peer
+  useEffect(() => {
+    const handlePeerTyping = (e: Event) => {
+      const { conversation_id, typing } = (e as CustomEvent).detail;
+      if (conversation_id !== id) return;
+      setPeerIsTyping(typing);
+      // Auto-clear after 4s in case the stop event is missed
+      if (typing) {
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => setPeerIsTyping(false), 4000);
+      }
+    };
+    window.addEventListener('blynx:dm-typing', handlePeerTyping);
+    return () => window.removeEventListener('blynx:dm-typing', handlePeerTyping);
+  }, [id]);
 
   // ── Step 5: Send message (encrypt if both keys available) ─────────────────
   const activeChat = dms.find(c => c.id === id);
@@ -218,6 +250,9 @@ export function DMs() {
 
     const text = newMessage.trim();
     setNewMessage('');
+    // Stop typing indicator on send
+    typingSentRef.current = false;
+    const sendMessage = getSendMessage();
 
     // Try to encrypt; fall back to plaintext if either party has no pubkey
     let body = text;
@@ -233,13 +268,30 @@ export function DMs() {
       }
     }
 
-    const sendMessage = getSendMessage();
     if (sendMessage) {
       sendMessage('dm.message', { recipient_id: activeChat.peer_id, body });
     } else {
       console.error('[DMs] WebSocket not connected');
     }
   }, [newMessage, id, user, activeChat]);
+
+  // Typing indicator — send once when user starts typing, auto-stop after 3s inactivity
+  const handleTypingInput = useCallback((value: string) => {
+    setNewMessage(value);
+    if (!activeChat || !id) return;
+    const sendMessage = getSendMessage();
+    if (!sendMessage) return;
+    if (value.trim() && !typingSentRef.current) {
+      typingSentRef.current = true;
+      sendMessage('dm.typing', { recipient_id: activeChat.peer_id, typing: true });
+    }
+    // Reset typing after 3s of no keystrokes
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      typingSentRef.current = false;
+      if (value.trim()) sendMessage?.('dm.typing', { recipient_id: activeChat?.peer_id, typing: false });
+    }, 3000);
+  }, [activeChat, id]);
 
   // ── Render helpers ────────────────────────────────────────────────────────
   const fmt = (d: string) => {
@@ -335,7 +387,7 @@ export function DMs() {
         {id && activeChat ? (
           <>
             {/* Header */}
-            <div style={{ height: '52px', padding: '0 16px', borderBottom: '1px solid var(--border)', background: 'var(--blynx-850)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            <div style={{ height: '64px', padding: '0 16px', borderBottom: '1px solid var(--border)', background: 'var(--blynx-850)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ position: 'relative', width: '32px', height: '32px' }}>
                   <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '13px', overflow: 'hidden' }}>
@@ -479,6 +531,19 @@ export function DMs() {
                 })
               )}
               <div ref={messagesEndRef} />
+              {/* Typing indicator */}
+              {peerIsTyping && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', padding: '0 4px' }}>
+                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '11px', fontWeight: 700, flexShrink: 0, overflow: 'hidden' }}>
+                    {activeChat.peer_avatar ? <img src={activeChat.peer_avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (activeChat.peer_name || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ padding: '8px 14px', borderRadius: '18px 18px 18px 4px', background: 'var(--blynx-750)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {[0,1,2].map(i => (
+                      <div key={i} style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', animation: `bounce 1.2s ${i * 0.2}s infinite` }} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Input */}
@@ -494,7 +559,7 @@ export function DMs() {
                 <input
                   ref={inputRef}
                   type="text" value={newMessage}
-                  onChange={e => setNewMessage(e.target.value)}
+                  onChange={e => handleTypingInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                   placeholder={`Message ${activeChat.peer_name}${isE2EE ? ' 🔒' : ''}…`}
                   style={{ flex: 1, background: 'var(--blynx-750)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 14px', color: 'white', fontSize: '14px', outline: 'none', fontFamily: 'inherit' }}

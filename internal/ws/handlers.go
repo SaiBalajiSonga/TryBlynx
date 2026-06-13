@@ -118,6 +118,8 @@ func handleMessage(c *Client, msg *InboundMessage) {
 	// ── Direct Messages ──────────────────────────────────
 	case "dm.message":
 		handleDMMessage(c, msg.Payload)
+	case "dm.typing":
+		handleDMTyping(c, msg.Payload)
 
 	// ── Matchmaking ──────────────────────────────────────
 	case "match.find":
@@ -563,6 +565,43 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 
 	// Deliver to recipient (if online — otherwise they'll see
 	// it in their DM history via the REST API)
+	c.Hub.direct <- &DirectMessage{TargetUserID: recipientID, Data: outData}
+}
+
+// handleDMTyping processes "dm.typing" messages.
+// Relays a typing indicator to the recipient. Purely ephemeral — not persisted.
+//
+// Inbound:  {"type":"dm.typing","payload":{"recipient_id":"<uuid>","typing":true}}
+// Outbound: {"type":"dm.typing","payload":{"sender_id":"...","conversation_id":"...","typing":true}}
+func handleDMTyping(c *Client, payload json.RawMessage) {
+	var p struct {
+		RecipientID string `json:"recipient_id"`
+		Typing      bool   `json:"typing"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil || p.RecipientID == "" {
+		return // silently ignore malformed typing events
+	}
+
+	recipientID, err := uuid.Parse(p.RecipientID)
+	if err != nil {
+		return
+	}
+
+	// Get or create DM conversation to get the conversation_id
+	convID, err := c.Hub.Store.GetOrCreateDM(context.Background(), c.UserID, recipientID)
+	if err != nil {
+		return
+	}
+
+	outbound := OutboundMessage{
+		Type: "dm.typing",
+		Payload: map[string]interface{}{
+			"sender_id":       c.UserID.String(),
+			"conversation_id": convID.String(),
+			"typing":          p.Typing,
+		},
+	}
+	outData, _ := json.Marshal(outbound)
 	c.Hub.direct <- &DirectMessage{TargetUserID: recipientID, Data: outData}
 }
 

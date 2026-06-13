@@ -155,7 +155,12 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           {matchPeerId && (
             <button
-              onClick={() => startVideo(matchPeerId, true)}
+              onClick={() => {
+                // Determine initiator deterministically by comparing UUIDs (same logic as VideoChat.tsx)
+                // so only one side ever sends the offer
+                const isInitiatorSide = (user?.id ?? '') < matchPeerId;
+                startVideo(matchPeerId, isInitiatorSide);
+              }}
               style={{
                 padding: '6px 12px',
                 borderRadius: '6px',
