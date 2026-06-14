@@ -24,9 +24,9 @@ export function VideoChat() {
   // by comparing UUIDs so only one side sends the offer.
   useEffect(() => {
     if (matchStatus === 'matched' && matchPeerId && activeRoomId && !isVideoActive && user) {
-      const isInitiator = user.id < matchPeerId;
+      const amInitiator = user.id < matchPeerId;
       const t = setTimeout(() => {
-        startVideo(matchPeerId, isInitiator);
+        startVideo(matchPeerId, amInitiator);
       }, 500);
       return () => clearTimeout(t);
     }

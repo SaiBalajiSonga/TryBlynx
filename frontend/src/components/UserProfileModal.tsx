@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { X, MapPin, Globe, Edit2, Shield, Crown, Code, ShieldAlert, Ban, UserPlus, UserCheck, UserX, MessageSquare, Clock, Loader } from 'lucide-react';
 import { SettingsView } from './Settings';
 import { useNavigate } from 'react-router-dom';
+import { useNotificationStore } from '../store/notificationStore';
 
 interface UserProfileModalProps {
   userId: string;

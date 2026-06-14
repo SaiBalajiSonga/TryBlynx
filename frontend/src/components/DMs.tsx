@@ -107,7 +107,7 @@ export function DMs() {
           is_online: c.is_online,
           last_active_at: c.last_active_at
         })));
-        if (!id && chats.length > 0) navigate(`/app/dms/${chats[0].id}`, { replace: true });
+        if (!id && chats.length > 0) navigate(`/dms/${chats[0].id}`, { replace: true });
       })
       .catch(err => console.error('[DMs] Failed to load list:', err))
       .finally(() => setLoadingDms(false));
@@ -122,7 +122,7 @@ export function DMs() {
 
     const fetchAndDecrypt = async () => {
       try {
-        const res = await api.getMessages(id);
+        const res = await api.getDMMessages(id);
         // Backend returns newest-first; reverse for chronological display
         const msgs: any[] = (res.messages || []).slice().reverse();
         const privJwk = loadPrivateKey(user.id);
@@ -175,7 +175,7 @@ export function DMs() {
 
     setMessages(prev => {
       const mid = latest.message_id || (latest as any).id;
-      if (prev.some(m => m.message_id === mid)) return prev; // already present
+      if (prev.some(m => (m.message_id || (m as any).id) === mid)) return prev; // already present
 
       // Decrypt async then re-set
       const privJwk = loadPrivateKey(user.id);
@@ -237,7 +237,7 @@ export function DMs() {
       const removedId = e.detail.userId;
       setDms(prev => prev.filter(c => c.peer_id !== removedId));
       if (activeChat?.peer_id === removedId) {
-        navigate('/app/dms', { replace: true });
+        navigate('/dms', { replace: true });
       }
     };
     window.addEventListener('blynx:friend-removed', onFriendRemoved);
@@ -345,7 +345,7 @@ export function DMs() {
           ) : dms.map(chat => {
             const isActive = chat.id === id;
             return (
-              <div key={chat.id} onClick={() => navigate(`/app/dms/${chat.id}`)} style={{
+              <div key={chat.id} onClick={() => navigate(`/dms/${chat.id}`)} style={{
                 display: 'flex', alignItems: 'center', padding: '10px 14px', cursor: 'pointer',
                 borderBottom: '1px solid var(--border)',
                 background: isActive ? 'var(--blynx-750)' : 'transparent', transition: 'background 0.1s',

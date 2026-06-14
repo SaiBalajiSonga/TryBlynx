@@ -122,6 +122,11 @@ export const api = {
 
   deleteAccount: () =>
     fetchWithAuth('/account/delete', { method: 'DELETE' }),
+
+  getDMMessages: (conversationId: string, cursor?: string) =>
+    fetchWithAuth(cursor
+      ? `/dm/${conversationId}/messages?cursor=${encodeURIComponent(cursor)}`
+      : `/dm/${conversationId}/messages`),
 };
 
 // Key backup endpoints (passphrase-encrypted private key blob)
