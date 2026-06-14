@@ -117,12 +117,18 @@ export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator
     <div
       style={{ position: 'absolute', inset: 0, zIndex: 100, background: '#000', overflow: 'hidden' }}
       onMouseMove={resetControlsTimer}
+      onTouchStart={resetControlsTimer}
+      onTouchMove={resetControlsTimer}
     >
       {/* ── Remote video (full screen) ── */}
+      {/* Tapping the video itself toggles controls on mobile where
+          onMouseMove never fires. onTouchStart is also on the parent
+          container but the video element absorbs pointer events. */}
       <video
         ref={remoteVideoRef}
         autoPlay playsInline
-        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        onClick={resetControlsTimer}
+        style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
       />
 
       {/* Connecting overlay */}
