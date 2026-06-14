@@ -36,6 +36,11 @@ type sendDMRequest struct {
 //
 // Returns all DM conversations the authenticated user is a member of,
 // ordered by most recent activity. Includes the peer's profile info.
+//
+// Online status is intentionally NOT included here. It is pushed in
+// real-time via 'presence.update' WebSocket events so the frontend
+// always has current data without polling. Including it here would add
+// a Redis HMGET on every list refresh with zero freshness benefit.
 func (s *Server) ListDMsHandler(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 
@@ -43,17 +48,6 @@ func (s *Server) ListDMsHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to fetch conversations")
 		return
-	}
-
-	peerIDs := make([]uuid.UUID, len(dms))
-	for i, dm := range dms {
-		peerIDs[i] = dm.PeerID
-	}
-	onlineStatus, _ := s.Store.GetGlobalPresenceUsers(r.Context(), peerIDs)
-	for i := range dms {
-		if onlineStatus[dms[i].PeerID] {
-			dms[i].IsOnline = true
-		}
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{

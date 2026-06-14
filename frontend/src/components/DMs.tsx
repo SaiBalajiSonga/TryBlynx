@@ -102,9 +102,12 @@ export function DMs() {
       .then(res => {
         const chats = res.conversations || [];
         setDms(chats);
+        // Seed the presence store with peer IDs from the DM list.
+        // is_online is no longer included in the REST response — presence
+        // is kept live by WS 'presence.update' pushes instead.
         usePresenceStore.getState().initializePresence(chats.map((c: any) => ({
           id: c.peer_id,
-          is_online: c.is_online,
+          is_online: false,
           last_active_at: c.last_active_at
         })));
         if (!id && chats.length > 0) navigate(`/dms/${chats[0].id}`, { replace: true });
@@ -166,7 +169,7 @@ export function DMs() {
           setDms(res.conversations || []);
           usePresenceStore.getState().initializePresence((res.conversations || []).map((c: any) => ({
             id: c.peer_id,
-            is_online: c.is_online,
+            is_online: false,
             last_active_at: c.last_active_at
           })));
         }).finally(() => { keyRefetchInFlightRef.current = false; });
