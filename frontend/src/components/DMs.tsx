@@ -110,7 +110,7 @@ export function DMs() {
           is_online: false,
           last_active_at: c.last_active_at
         })));
-        if (!id && chats.length > 0) navigate(`/dms/${chats[0].id}`, { replace: true });
+        if (!id && chats.length > 0) navigate(`/app/dms/${chats[0].id}`, { replace: true });
       })
       .catch(err => console.error('[DMs] Failed to load list:', err))
       .finally(() => setLoadingDms(false));
@@ -240,7 +240,7 @@ export function DMs() {
       const removedId = e.detail.userId;
       setDms(prev => prev.filter(c => c.peer_id !== removedId));
       if (activeChat?.peer_id === removedId) {
-        navigate('/dms', { replace: true });
+        navigate('/app/dms', { replace: true });
       }
     };
     window.addEventListener('blynx:friend-removed', onFriendRemoved);
@@ -350,7 +350,7 @@ export function DMs() {
           ) : dms.map(chat => {
             const isActive = chat.id === id;
             return (
-              <div key={chat.id} onClick={() => navigate(`/dms/${chat.id}`)} style={{
+              <div key={chat.id} onClick={() => navigate(`/app/dms/${chat.id}`)} style={{
                 display: 'flex', alignItems: 'center', padding: '10px 14px', cursor: 'pointer',
                 borderBottom: '1px solid var(--border)',
                 background: isActive ? 'var(--blynx-750)' : 'transparent', transition: 'background 0.1s',
