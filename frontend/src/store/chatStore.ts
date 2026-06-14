@@ -146,7 +146,12 @@ export const useChatStore = create<ChatState>((set) => ({
 
   clearMatchChat: () => set((state) => {
     const newMessages = { ...state.messages };
-    if (state.activeRoomId && state.matchStatus === 'matched') {
+    // Always clean up the active room's messages if we have one.
+    // The old guard (matchStatus === 'matched') caused a memory leak:
+    // if the peer disconnected first, matchStatus may have already
+    // transitioned away from 'matched' before clearMatchChat ran,
+    // leaving stale ephemeral-room message arrays in the store forever.
+    if (state.activeRoomId) {
       delete newMessages[state.activeRoomId];
     }
     return {
