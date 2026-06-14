@@ -22,6 +22,7 @@ interface NotificationState {
   notifications: AppNotification[];
   unreadCount: number;
   loading: boolean;
+  initialized: boolean; // true after the first successful fetch this session
   fetchNotifications: () => Promise<void>;
   markAllRead: () => Promise<void>;
   addNotification: (n: AppNotification) => void;
@@ -39,12 +40,17 @@ interface NotificationState {
   setHandledActorId: (id: string | null) => void;
 }
 
-export const useNotificationStore = create<NotificationState>((set) => ({
+export const useNotificationStore = create<NotificationState>((set, get) => ({
   notifications: [],
   unreadCount: 0,
   loading: false,
+  initialized: false,
 
   fetchNotifications: async () => {
+    // Skip if already fetched this session — Dashboard remounts on every
+    // navigation; we don't want a REST round-trip each time.
+    // WS pushes keep the store fresh after the initial load.
+    if (get().initialized) return;
     set({ loading: true });
     try {
       const data = await api.getNotifications();
@@ -52,6 +58,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
         notifications: data.notifications || [],
         unreadCount: data.unread_count || 0,
         loading: false,
+        initialized: true,
       });
     } catch {
       set({ loading: false });
@@ -85,6 +92,8 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   pendingFriendsCount: 0,
   unseenPendingFriends: false,
   fetchPendingFriendsCount: async () => {
+    // Same session-init guard as fetchNotifications.
+    if (get().initialized) return;
     try {
       const data = await api.getFriendRequests();
       // count only incoming requests
