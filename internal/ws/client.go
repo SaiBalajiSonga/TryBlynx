@@ -112,6 +112,11 @@ type Client struct {
 	// ReadPump goroutine — no synchronization needed.
 	lastMsgBody string
 
+	// lastMsgAt is the time the last text message was sent.
+	// Used to restrict the duplicate filter to a short burst window
+	// so legitimate repeated questions (sent >500 ms apart) are allowed.
+	lastMsgAt time.Time
+
 	// joinedRooms tracks the Redis channel keys of rooms this
 	// client has joined. Accessed ONLY from the ReadPump
 	// goroutine — no synchronization needed.
@@ -202,16 +207,20 @@ func (c *Client) ReadPump() {
 
 		// ── Exact-Duplicate Text Filter ──────────────────────
 		// Only applied to message types that carry user-authored text.
+		// The filter only fires within a 500 ms burst window so that
+		// legitimate repeated questions sent after a pause are allowed.
 		if isTextMessage(msg.Type) {
 			body := extractBody(msg.Payload)
-			if body != "" && body == c.lastMsgBody {
-				// Silently drop: identical to previous message.
+			now := time.Now()
+			if body != "" && body == c.lastMsgBody && now.Sub(c.lastMsgAt) < 500*time.Millisecond {
+				// Silently drop: identical body within burst window.
 				// No error sent — the client sees no feedback,
 				// making automated spam tools ineffective.
 				continue
 			}
 			if body != "" {
 				c.lastMsgBody = body
+				c.lastMsgAt = now
 			}
 		}
 
