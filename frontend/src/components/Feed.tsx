@@ -15,10 +15,14 @@ export function Feed() {
   const user = useAuthStore((s) => s.user);
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [composing, setComposing] = useState(false);
   const [newPost, setNewPost] = useState('');
   const [posting, setPosting] = useState(false);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [hasMore, setHasMore] = useState(true);
+  const PAGE_SIZE = 20;
 
   useEffect(() => { loadFeed(); }, []);
 
@@ -27,11 +31,30 @@ export function Feed() {
       setIsLoading(true);
       setError('');
       const data = await api.getFeed();
-      setPosts(data.posts || []);
+      const fetched: FeedPost[] = data.posts || [];
+      setPosts(fetched);
+      setHasMore(fetched.length === PAGE_SIZE);
+      if (fetched.length > 0) setCursor(fetched[fetched.length - 1].created_at);
     } catch (err: any) {
       setError(err.message || 'Failed to load feed');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!hasMore || loadingMore || !cursor) return;
+    try {
+      setLoadingMore(true);
+      const data = await api.getFeed(cursor);
+      const fetched: FeedPost[] = data.posts || [];
+      setPosts(prev => [...prev, ...fetched]);
+      setHasMore(fetched.length === PAGE_SIZE);
+      if (fetched.length > 0) setCursor(fetched[fetched.length - 1].created_at);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load more posts');
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -184,6 +207,23 @@ export function Feed() {
             {posts.map((post, i) => (
               <PostCard key={post.id} post={post} delay={i * 40} />
             ))}
+            {hasMore && (
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                style={{
+                  marginTop: '8px', padding: '10px', width: '100%',
+                  background: 'var(--blynx-700)', border: '1px solid var(--border)',
+                  borderRadius: '10px', color: 'var(--text-secondary)',
+                  cursor: loadingMore ? 'not-allowed' : 'pointer',
+                  fontSize: '14px', fontWeight: 500,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                }}
+              >
+                {loadingMore ? <Loader2 size={14} className="animate-spin-slow" /> : null}
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            )}
           </div>
         )}
       </div>
