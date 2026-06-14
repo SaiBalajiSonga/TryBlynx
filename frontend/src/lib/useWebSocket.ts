@@ -177,7 +177,7 @@ export function useWebSocket() {
         console.log('Unhandled WS message:', data.type, data);
     }
   }, [addMessage, addDMMessage, updateMessage, deleteMessage,
-      setMatchStatus, setActiveRoomId, setMatchPeerId, addNotification, navigate]);
+      setMatchStatus, setActiveRoomId, setMatchPeerId, addNotification]);
 
   // Always keep the ref pointing to the latest handleMessage
   handleMessageRef.current = handleMessage;
