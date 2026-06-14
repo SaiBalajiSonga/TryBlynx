@@ -163,6 +163,13 @@ func (s *Server) SendDMHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Populate SenderName so the REST response matches the WS message
+	// shape (handleDMMessage joins the username; REST path must too).
+	msg.SenderName = caller.Username
+	if caller.DisplayName != "" {
+		msg.SenderName = caller.DisplayName
+	}
+
 	respondJSON(w, http.StatusCreated, msg)
 }
 
