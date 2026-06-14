@@ -67,9 +67,9 @@ export const api = {
   /** Send a DM. Backend uses recipient_id + body at /api/dm/send */
   sendDM: (recipientId: string, body: string) =>
     fetchWithAuth('/dm/send', { method: 'POST', body: JSON.stringify({ recipient_id: recipientId, body }) }),
-  /** Legacy alias — kept for group chat which POSTs to /dm/{id} */
-  sendMessage: (_conversationId: string, body: string) =>
-    fetchWithAuth('/dm/send', { method: 'POST', body: JSON.stringify({ body }) }),
+  /** Send a message to a group conversation via WS — REST fallback uses conversation_id correctly. */
+  sendMessage: (conversationId: string, body: string) =>
+    fetchWithAuth(`/dm/${conversationId}`, { method: 'POST', body: JSON.stringify({ body }) }),
 
   // ── User Search ─────────────────────────────────────────────
   searchUsers: (query: string) => fetchWithAuth(`/users/search?q=${encodeURIComponent(query)}`),
