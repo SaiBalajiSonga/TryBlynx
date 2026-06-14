@@ -577,8 +577,9 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 // Outbound: {"type":"dm.typing","payload":{"sender_id":"...","conversation_id":"...","typing":true}}
 func handleDMTyping(c *Client, payload json.RawMessage) {
 	var p struct {
-		RecipientID string `json:"recipient_id"`
-		Typing      bool   `json:"typing"`
+		RecipientID    string `json:"recipient_id"`
+		ConversationID string `json:"conversation_id"` // preferred; avoids DB lookup per keystroke
+		Typing         bool   `json:"typing"`
 	}
 	if err := json.Unmarshal(payload, &p); err != nil || p.RecipientID == "" {
 		return // silently ignore malformed typing events
@@ -589,17 +590,24 @@ func handleDMTyping(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	// Get or create DM conversation to get the conversation_id
-	convID, err := c.Hub.Store.GetOrCreateDM(context.Background(), c.UserID, recipientID)
-	if err != nil {
-		return
+	// Use the conversation_id supplied by the client when available.
+	// This avoids a GetOrCreateDM DB round-trip on every keystroke.
+	// Fall back to DB lookup only when the client omits conversation_id
+	// (older clients or first-message scenarios).
+	convIDStr := p.ConversationID
+	if convIDStr == "" {
+		convID, err := c.Hub.Store.GetOrCreateDM(context.Background(), c.UserID, recipientID)
+		if err != nil {
+			return
+		}
+		convIDStr = convID.String()
 	}
 
 	outbound := OutboundMessage{
 		Type: "dm.typing",
 		Payload: map[string]interface{}{
 			"sender_id":       c.UserID.String(),
-			"conversation_id": convID.String(),
+			"conversation_id": convIDStr,
 			"typing":          p.Typing,
 		},
 	}

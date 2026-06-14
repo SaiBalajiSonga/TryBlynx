@@ -281,15 +281,17 @@ export function DMs() {
     if (!activeChat || !id) return;
     const sendMessage = getSendMessage();
     if (!sendMessage) return;
+    // Include conversation_id so the server skips its GetOrCreateDM DB lookup
+    // on every keystroke (critical perf fix — was a full DB round-trip per key).
     if (value.trim() && !typingSentRef.current) {
       typingSentRef.current = true;
-      sendMessage('dm.typing', { recipient_id: activeChat.peer_id, typing: true });
+      sendMessage('dm.typing', { recipient_id: activeChat.peer_id, conversation_id: id, typing: true });
     }
     // Reset typing after 3s of no keystrokes
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
       typingSentRef.current = false;
-      if (value.trim()) sendMessage?.('dm.typing', { recipient_id: activeChat?.peer_id, typing: false });
+      if (value.trim()) sendMessage?.('dm.typing', { recipient_id: activeChat?.peer_id, conversation_id: id, typing: false });
     }, 3000);
   }, [activeChat, id]);
 
