@@ -13,6 +13,9 @@ let globalWs: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let isConnecting = false;
 let globalSendMessage: ((type: string, payload: unknown) => void) | null = null;
+// Module-level navigate ref so toast onClick closures always dispatch
+// via the latest router instance, even after re-renders.
+let globalNavigate: ((path: string) => void) | null = null;
 
 export function useWebSocket() {
   const navigate = useNavigate();
@@ -65,13 +68,14 @@ export function useWebSocket() {
                   body: bodyText
                 });
               }
-              // Show in-app toast
+              // Show in-app toast — use globalNavigate so the click handler
+              // always dispatches through the live router, not a stale closure.
               useUIStore.getState().showToast(
                 'info',
                 `${data.payload.sender_name}:\n${bodyText.substring(0, 50)}${bodyText.length > 50 ? '...' : ''}`,
                 () => {
                   useUIStore.getState().setActivePanel('dms');
-                  navigate(`/app/dms/${data.payload.conversation_id}`);
+                  globalNavigate?.(`/app/dms/${data.payload.conversation_id}`);
                 }
               );
             })();
@@ -260,6 +264,8 @@ export function useWebSocket() {
   }, []);
 
   globalSendMessage = sendMessage;
+  // Keep the module-level ref in sync with the latest navigate instance.
+  globalNavigate = navigate;
 
   return { sendMessage };
 }
