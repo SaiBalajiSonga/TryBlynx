@@ -244,15 +244,16 @@ func handleChatJoin(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	// Request the Hub to register this client in the room
-	// (synchronous via Done channel to ensure room is ready
-	// before we return to the ReadPump)
-	done := make(chan struct{})
-	c.Hub.joinRoom <- &RoomRequest{Client: c, RoomID: roomKey, Done: done}
-	<-done
-
-	// Track locally for fast membership checks in chat.message
+	// Mark locally BEFORE telling Hub so ReadPump can immediately route
+	// chat.message events into this room. joinedRooms is only accessed
+	// from this ReadPump goroutine — no race condition.
 	c.joinedRooms[roomKey] = true
+
+	// Fire-and-forget join request to Hub. We do NOT block on a Done
+	// channel here: doing so stalls ReadPump while Hub.Run() processes
+	// the request, preventing any WebSocket frames from being read in
+	// the interim (causes client-side timeouts and message loss under load).
+	c.Hub.joinRoom <- &RoomRequest{Client: c, RoomID: roomKey, Done: nil}
 
 	// Add to Redis live presence tracking
 	if err := c.Hub.Store.AddRoomPresence(context.Background(), p.RoomID, c.UserID); err != nil {
