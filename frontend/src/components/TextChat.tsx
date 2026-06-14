@@ -28,8 +28,11 @@ export function TextChat() {
 
       if (chat.activeRoomId) {
         if (chat.matchPeerId) {
-          // Random match — peer must be notified via match.leave
+          // Random match — notify peer AND unsubscribe from the ephemeral room.
+          // match.leave only notifies the peer; chat.leave unsubscribes the
+          // WS room so the server doesn't keep the client in a phantom room.
           sendMessage('match.leave', { peer_id: chat.matchPeerId, room_id: chat.activeRoomId });
+          sendMessage('chat.leave', { room_id: chat.activeRoomId });
         } else {
           // Group room — standard room leave
           sendMessage('chat.leave', { room_id: chat.activeRoomId });
