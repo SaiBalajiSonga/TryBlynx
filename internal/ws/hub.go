@@ -326,35 +326,37 @@ func (h *Hub) handleUnregister(client *Client) {
 }
 
 // broadcastPresenceUpdate sends a presence WS event to all connected friends of a user.
+// Runs in its own goroutine — never called directly from the Run() select loop —
+// so the Hub event loop is never blocked by DB queries or SendToUser calls.
 func (h *Hub) broadcastPresenceUpdate(userID uuid.UUID, online bool) {
-	// 1. Fetch friends from DB
-	friends, err := h.Store.GetFriends(context.Background(), userID)
-	if err != nil {
-		return
-	}
-
-	// 2. Prepare payload
-	payload, _ := json.Marshal(map[string]interface{}{
-		"type": "presence.update",
-		"payload": map[string]interface{}{
-			"user_id": userID,
-			"online":  online,
-			"last_active_at": time.Now(),
-		},
-	})
-
-	// 3. Send to each friend if they are connected
-	for _, f := range friends {
-		// f is FriendWithProfile. Get the peer ID
-		var friendID uuid.UUID
-		if f.RequesterID == userID {
-			friendID = f.AddresseeID
-		} else {
-			friendID = f.RequesterID
+	go func() {
+		// 1. Fetch friends from DB (blocking — must be off the Run goroutine)
+		friends, err := h.Store.GetFriends(context.Background(), userID)
+		if err != nil {
+			return
 		}
 
-		h.SendToUser(friendID, payload)
-	}
+		// 2. Prepare payload
+		payload, _ := json.Marshal(map[string]interface{}{
+			"type": "presence.update",
+			"payload": map[string]interface{}{
+				"user_id":        userID,
+				"online":         online,
+				"last_active_at": time.Now(),
+			},
+		})
+
+		// 3. Send to each friend if they are connected
+		for _, f := range friends {
+			var friendID uuid.UUID
+			if f.RequesterID == userID {
+				friendID = f.AddresseeID
+			} else {
+				friendID = f.RequesterID
+			}
+			h.SendToUser(friendID, payload)
+		}
+	}()
 }
 
 // handleJoinRoom adds a client to a room. If this is the first
