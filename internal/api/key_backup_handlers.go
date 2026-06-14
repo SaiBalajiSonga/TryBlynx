@@ -14,8 +14,14 @@ import (
 // PBKDF2-derived AES key. The server never sees the passphrase or plaintext key.
 //
 // Request body: { "blob": "<json string>" }
+// Max body size: 16 KB (enforced before JSON decode to prevent DoS).
 func (s *Server) SaveKeyBackupHandler(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
+
+	// Limit body size BEFORE reading to prevent a large-body DoS attack.
+	// A legitimate RSA-2048 JWK encrypted with AES-256-GCM and base64-encoded
+	// fits comfortably under 4 KB; 16 KB is a generous upper bound.
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 
 	var body struct {
 		Blob string `json:"blob"`
@@ -25,7 +31,7 @@ func (s *Server) SaveKeyBackupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.Blob) > 8192 {
-		respondError(w, http.StatusBadRequest, "blob too large")
+		respondError(w, http.StatusBadRequest, "blob too large (max 8 KB)")
 		return
 	}
 
