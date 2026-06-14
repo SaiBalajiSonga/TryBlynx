@@ -122,6 +122,27 @@ func (s *Server) UpdateProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate public_key if provided: must be a valid JSON object
+	// with a recognised JWK key type ("kty" field: RSA or EC).
+	// Accepting arbitrary strings would let a user store junk that
+	// breaks E2EE for everyone trying to send them an encrypted message.
+	if req.PublicKey != "" {
+		if len(req.PublicKey) > 4096 {
+			respondError(w, http.StatusBadRequest, "public_key too large")
+			return
+		}
+		var jwk map[string]interface{}
+		if err := json.Unmarshal([]byte(req.PublicKey), &jwk); err != nil {
+			respondError(w, http.StatusBadRequest, "public_key must be a valid JSON Web Key (JWK)")
+			return
+		}
+		kty, _ := jwk["kty"].(string)
+		if kty != "RSA" && kty != "EC" {
+			respondError(w, http.StatusBadRequest, "public_key kty must be RSA or EC")
+			return
+		}
+	}
+
 	// Apply defaults for empty optional fields
 	if req.Gender == "" {
 		req.Gender = "unspecified"
