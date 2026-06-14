@@ -131,8 +131,10 @@ export function useWebSocket() {
         break;
       }
       case 'friend_request_received':
-        // A new incoming request arrived
-        useNotificationStore.getState().fetchPendingFriendsCount();
+        // A new incoming request arrived — increment the badge immediately
+        // without a REST round-trip. fetchPendingFriendsCount is guarded
+        // by pendingFriendsInitialized and won't re-fetch here.
+        useNotificationStore.getState().incrementPendingFriends();
         useNotificationStore.getState().incrementFriendRequestsVersion();
         const actorName = data.payload?.actor_name ? ` from ${data.payload.actor_name}` : '';
         useUIStore.getState().showToast('info', `New friend request${actorName}!`);

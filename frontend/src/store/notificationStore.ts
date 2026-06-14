@@ -23,6 +23,7 @@ interface NotificationState {
   unreadCount: number;
   loading: boolean;
   initialized: boolean; // true after the first successful fetch this session
+  pendingFriendsInitialized: boolean; // separate guard for friend-request count
   fetchNotifications: () => Promise<void>;
   markAllRead: () => Promise<void>;
   addNotification: (n: AppNotification) => void;
@@ -45,6 +46,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   unreadCount: 0,
   loading: false,
   initialized: false,
+  pendingFriendsInitialized: false,
 
   fetchNotifications: async () => {
     // Skip if already fetched this session — Dashboard remounts on every
@@ -92,16 +94,20 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   pendingFriendsCount: 0,
   unseenPendingFriends: false,
   fetchPendingFriendsCount: async () => {
-    // Same session-init guard as fetchNotifications.
-    if (get().initialized) return;
+    // Use a dedicated guard — NOT get().initialized (which belongs to
+    // fetchNotifications). Previously both shared the same flag, so
+    // fetchPendingFriendsCount was permanently blocked after the first
+    // fetchNotifications() call, hiding all new friend requests from the badge.
+    if (get().pendingFriendsInitialized) return;
     try {
       const data = await api.getFriendRequests();
       // count only incoming requests
       const user = useAuthStore.getState().user;
       const incoming = (data.requests || []).filter((r: any) => r.addressee_id === user?.id);
-      set((state) => ({ 
+      set((state) => ({
         allRequests: data.requests || [],
         pendingFriendsCount: incoming.length,
+        pendingFriendsInitialized: true,
         unseenPendingFriends: incoming.length > state.pendingFriendsCount ? true : (incoming.length === 0 ? false : state.unseenPendingFriends)
       }));
     } catch {}
