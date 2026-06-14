@@ -146,10 +146,11 @@ export function useWebRTC(peerId: string | null, isInitiator: boolean = false) {
             try {
               if (signal.type === 'offer' && signal.sdp) {
                 await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-                for (const cand of earlyCandidates.current) {
-                  await pc.addIceCandidate(new RTCIceCandidate(cand));
+                // Flush candidates that arrived before setRemoteDescription
+                const queued = earlyCandidates.current.splice(0);
+                for (const cand of queued) {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
                 }
-                earlyCandidates.current = [];
 
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
@@ -157,13 +158,14 @@ export function useWebRTC(peerId: string | null, isInitiator: boolean = false) {
                 send?.('webrtc.answer', { peer_id: peerId, sdp: pc.localDescription });
               } else if (signal.type === 'answer' && signal.sdp) {
                 await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-                for (const cand of earlyCandidates.current) {
-                  await pc.addIceCandidate(new RTCIceCandidate(cand));
+                // Flush candidates that arrived before setRemoteDescription
+                const queued = earlyCandidates.current.splice(0);
+                for (const cand of queued) {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
                 }
-                earlyCandidates.current = [];
               } else if (signal.type === 'ice' && signal.candidate) {
                 if (pc.remoteDescription) {
-                  await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+                  await pc.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(() => {});
                 } else {
                   earlyCandidates.current.push(signal.candidate);
                 }
