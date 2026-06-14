@@ -13,10 +13,10 @@
 //               Filter Relaxation (time-based):
 //               As a user waits longer, filters are progressively
 //               dropped to increase match probability:
-//                 0-10s:  All filters active (interests, location, language)
-//                 10-20s: Interests filter dropped
-//                 20-30s: Location filter dropped
-//                 30s+:   Language filter dropped (only gender remains)
+//                 0-3s:   All filters active (interests, location, language)
+//                 3-6s:   Interests filter dropped
+//                 6-10s:  Location filter dropped
+//                 10s+:   Language filter dropped (only gender remains)
 //
 //               Gender is ALWAYS a strict filter but requires is_vip
 //               to select a specific target gender. Non-VIP users
@@ -54,9 +54,9 @@ const (
 	defaultTickInterval = 500 * time.Millisecond
 
 	// Filter relaxation thresholds (configurable via WorkerConfig).
-	defaultDropInterestsAfter = 10 * time.Second
-	defaultDropLocationAfter  = 20 * time.Second
-	defaultDropLanguageAfter  = 30 * time.Second
+	defaultDropInterestsAfter = 3 * time.Second
+	defaultDropLocationAfter  = 6 * time.Second
+	defaultDropLanguageAfter  = 10 * time.Second
 )
 
 // ──────────────────────────────────────────────────────────────
@@ -300,8 +300,8 @@ func isCompatible(a, b *MatchTicket, waitA, waitB time.Duration, cfg WorkerConfi
 		return false
 	}
 
-	// ── 2. RELAXABLE: Interests (drop after threshold) ───────
-	if maxWait < cfg.DropInterestsAfter {
+	// ── 2. RELAXABLE: Interests (drop after threshold unless Strict) ───────
+	if maxWait < cfg.DropInterestsAfter || a.StrictInterests || b.StrictInterests {
 		if !hasOverlap(a.Interests, b.Interests) {
 			return false
 		}

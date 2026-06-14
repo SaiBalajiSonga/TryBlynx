@@ -180,10 +180,19 @@ func (s *Server) SendFriendRequestHandler(w http.ResponseWriter, r *http.Request
 	}
 
 
+	callerName := ""
+	if caller != nil {
+		callerName = caller.Username
+		if caller.DisplayName != "" {
+			callerName = caller.DisplayName
+		}
+	}
+
 	// Push WS event to update recipient's pending badge
 	s.pushWSEvent(targetID, "friend_request_received", map[string]interface{}{
 		"friendship_id": friendship.ID,
 		"actor_id":      callerID,
+		"actor_name":    callerName,
 	})
 
 	respondJSON(w, http.StatusCreated, friendship)

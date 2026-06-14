@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
+import { useNotificationStore } from '../store/notificationStore';
 import { useNavigate } from 'react-router-dom';
 
 type FriendStatus = 'none' | 'pending_outgoing' | 'pending_incoming' | 'accepted' | 'blocked';
@@ -65,6 +66,7 @@ export function Search() {
 
   const handleSendRequest = (userId: string) => withLoading(userId, async () => {
     await api.sendFriendRequest(userId);
+    useNotificationStore.getState().fetchPendingFriendsCount();
     setStatus(userId, 'pending_outgoing');
     showFeedback(userId, 'Friend request sent!');
   });

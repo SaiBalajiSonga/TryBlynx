@@ -52,9 +52,10 @@ type MatchTicket struct {
 	Location     string
 	Language     string
 	Interests    []string
-	IsVIP        bool
-	Shadowbanned bool
-	SubmittedAt  time.Time
+	IsVIP           bool
+	Shadowbanned    bool
+	StrictInterests bool
+	SubmittedAt     time.Time
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -173,9 +174,10 @@ func parseTicket(userIDStr string, data map[string]string) (*MatchTicket, error)
 		TargetGender: data["target_gender"],
 		Location:     data["location"],
 		Language:     data["language"],
-		Interests:    interests,
-		IsVIP:        data["is_vip"] == "true",
-		Shadowbanned: data["shadowbanned"] == "true",
-		SubmittedAt:  submittedAt,
+		Interests:       interests,
+		IsVIP:           data["is_vip"] == "true",
+		Shadowbanned:    data["shadowbanned"] == "true",
+		StrictInterests: data["strict_interests"] == "true",
+		SubmittedAt:     submittedAt,
 	}, nil
 }

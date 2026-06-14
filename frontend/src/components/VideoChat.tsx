@@ -42,11 +42,20 @@ export function VideoChat() {
   useEffect(() => {
     return () => {
       const webrtc = useWebRTCStore.getState();
+      const chat = useChatStore.getState();
+      
       if (webrtc.isVideoActive) {
+        if (chat.activeRoomId) {
+          if (chat.matchPeerId) {
+            sendMessage('match.leave', { peer_id: chat.matchPeerId, room_id: chat.activeRoomId });
+          } else {
+            sendMessage('chat.leave', { room_id: chat.activeRoomId });
+          }
+          chat.clearMatchChat();
+        }
         webrtc.endVideo();
       }
       
-      const chat = useChatStore.getState();
       if (chat.matchStatus === 'waiting') {
         sendMessage('match.cancel', {});
         chat.setMatchStatus('idle');

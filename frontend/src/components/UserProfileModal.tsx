@@ -54,7 +54,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
     try { await fn(); } finally { setFriendLoading(false); }
   };
 
-  const handleSendRequest   = () => withLoading(async () => { await api.sendFriendRequest(userId);   setFriendStatus('pending_outgoing'); showFb('Friend request sent!'); });
+  const handleSendRequest   = () => withLoading(async () => { await api.sendFriendRequest(userId); useNotificationStore.getState().fetchPendingFriendsCount(); setFriendStatus('pending_outgoing'); showFb('Friend request sent!'); });
   const handleAccept        = () => withLoading(async () => { await api.acceptFriendRequest(userId);  setFriendStatus('accepted');         showFb('You are now friends!'); });
   const handleDecline       = () => withLoading(async () => { await api.declineFriendRequest(userId); setFriendStatus('none'); });
   const handleRemoveFriend  = () => withLoading(async () => {

@@ -50,7 +50,7 @@ export function useWebSocket() {
                 if (privJwk) {
                   try {
                     // decryptMessage takes (ciphertext, privJwk, isSender)
-                    bodyText = await decryptMessage(bodyText, privJwk, false);
+                    bodyText = await decryptMessage(bodyText, privJwk, data.payload.sender_id === myId);
                   } catch (e) {
                     bodyText = '🔒 Encrypted message';
                   }
@@ -120,13 +120,18 @@ export function useWebSocket() {
       case 'notification.push': {
         // Real-time notification pushed by the server
         const n = data.payload;
-        if (n) addNotification(n);
+        if (n) {
+          addNotification(n);
+          useUIStore.getState().showToast('info', n.title || 'New Notification');
+        }
         break;
       }
       case 'friend_request_received':
-        // A new incoming request arrived — just re-fetch the authoritative count (no optimistic inc to avoid double-count)
+        // A new incoming request arrived
         useNotificationStore.getState().fetchPendingFriendsCount();
         useNotificationStore.getState().incrementFriendRequestsVersion();
+        const actorName = data.payload?.actor_name ? ` from ${data.payload.actor_name}` : '';
+        useUIStore.getState().showToast('info', `New friend request${actorName}!`);
         break;
       case 'friend_request_handled':
         // Someone accepted OR declined one of our outgoing requests.

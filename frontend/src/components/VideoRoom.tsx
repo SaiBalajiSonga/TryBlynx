@@ -291,7 +291,19 @@ export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator
                     iconSize={14}
                   />
                   <button
-                    onClick={endVideo}
+                    onClick={() => {
+                      endVideo();
+                      const chat = useChatStore.getState();
+                      if (chat.activeRoomId) {
+                        const send = getSendMessage();
+                        if (chat.matchPeerId) {
+                          send?.('match.leave', { peer_id: chat.matchPeerId, room_id: chat.activeRoomId });
+                        } else {
+                          send?.('chat.leave', { room_id: chat.activeRoomId });
+                        }
+                        chat.clearMatchChat();
+                      }
+                    }}
                     style={{
                       width: '32px', height: '32px', borderRadius: '50%',
                       border: 'none', cursor: 'pointer',

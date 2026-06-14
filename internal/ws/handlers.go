@@ -174,7 +174,9 @@ type dmMessagePayload struct {
 }
 
 type matchFindPayload struct {
-	TargetGender string `json:"target_gender"` // "male","female","any"
+	TargetGender    string   `json:"target_gender"`    // "male","female","any"
+	StrictInterests *bool    `json:"strict_interests"` // Wait for exact interest match
+	Interests       []string `json:"interests"`        // Optional temporary or permanent interests
 }
 
 type matchMessagePayload struct {
@@ -644,6 +646,19 @@ func handleMatchFind(c *Client, payload json.RawMessage) {
 		return
 	}
 
+	// If the user provided interests on the match screen, save them to their profile
+	if p.Interests != nil {
+		user, err = c.Hub.Store.UpdateUserProfile(
+			context.Background(), c.UserID,
+			user.DisplayName, user.AvatarURL, user.Bio, user.Gender, user.Location, user.Language,
+			p.Interests, user.PublicKey,
+		)
+		if err != nil {
+			c.sendError("failed to save profile interests")
+			return
+		}
+	}
+
 	// Build ticket data for Redis
 	now := time.Now()
 	score := float64(now.UnixMilli())
@@ -656,10 +671,11 @@ func handleMatchFind(c *Client, payload json.RawMessage) {
 		"target_gender": targetGender,
 		"location":      user.Location,
 		"language":      user.Language,
-		"interests":     string(interestsJSON),
-		"is_vip":        formatBool(user.IsVIP),
-		"shadowbanned":  formatBool(user.Shadowbanned),
-		"submitted_at":  now.Format(time.RFC3339Nano),
+		"interests":        string(interestsJSON),
+		"strict_interests": formatBool(p.StrictInterests != nil && *p.StrictInterests),
+		"is_vip":           formatBool(user.IsVIP),
+		"shadowbanned":     formatBool(user.Shadowbanned),
+		"submitted_at":     now.Format(time.RFC3339Nano),
 	}
 
 	// Atomic ticket submission: ZADD + HSET in a pipeline

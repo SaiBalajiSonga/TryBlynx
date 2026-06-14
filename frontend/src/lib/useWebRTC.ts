@@ -37,8 +37,6 @@ export function useWebRTC(peerId: string | null, isInitiator: boolean = false) {
   const [connectionState, setConnectionState] = useState<RTCPeerConnectionState>('new');
   const [isReady, setIsReady] = useState(false);
 
-  // FIX: Use consumeSignalsForPeer to not consume signals meant for other peers
-  const consumeSignalsForPeer = useWebRTCStore((s) => s.consumeSignalsForPeer);
   const incomingSignals = useWebRTCStore((s) => s.incomingSignals);
 
   const initWebRTC = useCallback(async () => {
@@ -122,71 +120,131 @@ export function useWebRTC(peerId: string | null, isInitiator: boolean = false) {
 
   const earlyCandidates = useRef<any[]>([]);
 
-  // FIX: Process only signals for this peer, don't blindly clear all signals
   useEffect(() => {
-    if (!isReady || !peerConnection.current || !peerId || incomingSignals.length === 0) return;
-    if (processingRef.current) return;
+    if (!isReady || !peerConnection.current || !peerId) return;
 
-    const signals = consumeSignalsForPeer(peerId);
-    if (signals.length === 0) return;
+    const processQueue = async () => {
+      if (processingRef.current) return;
+      processingRef.current = true;
 
-    processingRef.current = true;
-    (async () => {
-      for (const signal of signals) {
-        const pc = peerConnection.current;
-        if (!pc) break;
-        try {
-          if (signal.type === 'offer' && signal.sdp) {
-            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-            for (const cand of earlyCandidates.current) {
-              await pc.addIceCandidate(new RTCIceCandidate(cand));
-            }
-            earlyCandidates.current = [];
-            
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            const send = getSendMessage();
-            send?.('webrtc.answer', { peer_id: peerId, sdp: pc.localDescription });
-          } else if (signal.type === 'answer' && signal.sdp) {
-            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-            for (const cand of earlyCandidates.current) {
-              await pc.addIceCandidate(new RTCIceCandidate(cand));
-            }
-            earlyCandidates.current = [];
-          } else if (signal.type === 'ice' && signal.candidate) {
-            if (pc.remoteDescription) {
-              await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
-            } else {
-              earlyCandidates.current.push(signal.candidate);
+      try {
+        while (true) {
+          const signals = useWebRTCStore.getState().consumeSignalsForPeer(peerId);
+          if (signals.length === 0) break;
+
+          for (const signal of signals) {
+            const pc = peerConnection.current;
+            if (!pc) break;
+            try {
+              if (signal.type === 'offer' && signal.sdp) {
+                await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+                for (const cand of earlyCandidates.current) {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand));
+                }
+                earlyCandidates.current = [];
+
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                const send = getSendMessage();
+                send?.('webrtc.answer', { peer_id: peerId, sdp: pc.localDescription });
+              } else if (signal.type === 'answer' && signal.sdp) {
+                await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+                for (const cand of earlyCandidates.current) {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand));
+                }
+                earlyCandidates.current = [];
+              } else if (signal.type === 'ice' && signal.candidate) {
+                if (pc.remoteDescription) {
+                  await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+                } else {
+                  earlyCandidates.current.push(signal.candidate);
+                }
+              }
+            } catch (err) {
+              console.error('Error processing signal', signal.type, err);
             }
           }
-        } catch (err) {
-          console.error('Error processing signal', signal.type, err);
         }
+      } finally {
+        processingRef.current = false;
       }
-      processingRef.current = false;
-    })();
-  }, [incomingSignals, peerId, consumeSignalsForPeer, isReady]);
+    };
+
+    processQueue();
+  }, [incomingSignals, peerId, isReady]);
 
   // initiateCall removed as it is handled internally
 
-  const toggleMute = useCallback(() => {
+  const toggleMute = useCallback(async () => {
     if (!localStream.current) return;
-    const track = localStream.current.getAudioTracks()[0];
-    if (track) {
-      track.enabled = !track.enabled;
-      setIsMuted(!track.enabled);
+    
+    if (!isMuted) {
+      // Turn OFF mic: stop the track completely
+      const track = localStream.current.getAudioTracks()[0];
+      if (track) {
+        track.stop();
+        localStream.current.removeTrack(track);
+      }
+      setIsMuted(true);
+    } else {
+      // Turn ON mic
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const newTrack = stream.getAudioTracks()[0];
+        localStream.current.addTrack(newTrack);
+        
+        if (peerConnection.current) {
+          const sender = peerConnection.current.getSenders().find(s => s.track?.kind === 'audio');
+          if (sender) {
+            await sender.replaceTrack(newTrack);
+          } else {
+            peerConnection.current.addTrack(newTrack, localStream.current);
+          }
+        }
+        setIsMuted(false);
+      } catch (err) {
+        console.error('Failed to unmute audio', err);
+      }
     }
-  }, []);
+  }, [isMuted]);
 
-  const toggleVideo = useCallback(() => {
+  const toggleVideo = useCallback(async () => {
     if (!localStream.current) return;
-    const track = localStream.current.getVideoTracks()[0];
-    if (track) {
-      track.enabled = !track.enabled;
-      setIsVideoOff(!track.enabled);
+    
+    if (!isVideoOff) {
+      // Turn OFF video: stop the track so the camera light goes off
+      const track = localStream.current.getVideoTracks()[0];
+      if (track) {
+        track.stop();
+        localStream.current.removeTrack(track);
+      }
+      setIsVideoOff(true);
+    } else {
+      // Turn ON video
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const newTrack = stream.getVideoTracks()[0];
+        localStream.current.addTrack(newTrack);
+        
+        if (localVideoRef.current) {
+          // Re-assign srcObject so the video element picks up the new track
+          localVideoRef.current.srcObject = localStream.current;
+        }
+
+        if (peerConnection.current) {
+          const sender = peerConnection.current.getSenders().find(s => s.track?.kind === 'video');
+          if (sender) {
+            await sender.replaceTrack(newTrack);
+          } else {
+            peerConnection.current.addTrack(newTrack, localStream.current);
+          }
+        }
+        setIsVideoOff(false);
+      } catch (err) {
+        console.error('Failed to start video', err);
+      }
     }
-  }, []);
+  }, [isVideoOff]);
 
   return {
     localVideoRef,
