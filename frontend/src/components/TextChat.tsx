@@ -19,20 +19,24 @@ export function TextChat() {
     return () => clearInterval(t);
   }, [matchStatus]);
 
-  // Clean up when leaving the Text Chat page
+  // Clean up when unmounting the Text Chat page (e.g. navigating away).
+  // ChatRoom handles leave internally via its own buttons; this only
+  // fires when the user navigates away mid-match without pressing Skip/Next.
   useEffect(() => {
     return () => {
       const chat = useChatStore.getState();
-      
+
       if (chat.activeRoomId) {
         if (chat.matchPeerId) {
-          sendMessage('chat.leave', { room_id: chat.activeRoomId });
+          // Random match — peer must be notified via match.leave
+          sendMessage('match.leave', { peer_id: chat.matchPeerId, room_id: chat.activeRoomId });
         } else {
+          // Group room — standard room leave
           sendMessage('chat.leave', { room_id: chat.activeRoomId });
         }
         chat.clearMatchChat();
       }
-      
+
       if (chat.matchStatus === 'waiting') {
         sendMessage('match.cancel', {});
         chat.setMatchStatus('idle');
@@ -47,7 +51,7 @@ export function TextChat() {
       <MatchHistorySidebar />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {matchStatus === 'matched' && activeRoomId ? (
-          <ChatRoom onLeave={() => { if (useChatStore.getState().activeRoomId) sendMessage('chat.leave', { room_id: useChatStore.getState().activeRoomId }); useChatStore.getState().clearMatchChat?.(); }} />
+          <ChatRoom onLeave={() => { useChatStore.getState().clearMatchChat?.(); }} />
         ) : (
           <div style={{
             flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
