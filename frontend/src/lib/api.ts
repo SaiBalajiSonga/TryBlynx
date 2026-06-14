@@ -125,8 +125,8 @@ export const api = {
 
   getDMMessages: (conversationId: string, cursor?: string) =>
     fetchWithAuth(cursor
-      ? `/dm/${conversationId}/messages?cursor=${encodeURIComponent(cursor)}`
-      : `/dm/${conversationId}/messages`),
+      ? `/dm/${conversationId}?cursor=${encodeURIComponent(cursor)}`
+      : `/dm/${conversationId}`),
 };
 
 // Key backup endpoints (passphrase-encrypted private key blob)
