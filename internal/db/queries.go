@@ -1488,8 +1488,41 @@ func (s *Store) GetKeyBackup(ctx context.Context, userID uuid.UUID) (string, err
 }
 
 // DeleteUser permanently removes a user and all their associated data.
-// Cascades handle messages, conversations, friends, etc via FK constraints.
+// Runs inside a transaction to atomically:
+//  1. Delete DM conversations the user participated in (so the peer's
+//     DM list doesn't show a ghost conversation after deletion).
+//  2. Delete the users row (FK cascades handle feed_posts, friendships,
+//     notifications, profile_reviews, conversation_members, dm_pairs,
+//     blocks, reports, etc).
 func (s *Store) DeleteUser(ctx context.Context, userID uuid.UUID) error {
-	_, err := s.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
-	return err
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("db: delete user begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Step 1: delete DM conversations this user participated in.
+	// conversation_members and dm_pairs both cascade from conversations,
+	// so deleting the conversation row cleans those up too. This prevents
+	// the peer from seeing a ghost DM thread after account deletion.
+	_, err = tx.Exec(ctx, `
+		DELETE FROM conversations
+		WHERE type = 'dm'
+		  AND id IN (
+			SELECT conversation_id
+			FROM conversation_members
+			WHERE user_id = $1
+		  )
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("db: delete user — dm conversations: %w", err)
+	}
+
+	// Step 2: delete the user row; FK cascades handle everything else.
+	_, err = tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("db: delete user — users row: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
