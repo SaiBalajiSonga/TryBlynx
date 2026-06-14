@@ -470,7 +470,12 @@ export function DMs() {
 
             {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column' }}>
-              {loadingMessages ? (
+              {!e2eeReady ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: '12px' }}>
+                  <Loader size={22} color="var(--accent)" style={{ animation: 'spin 1s linear infinite' }} />
+                  <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Setting up end-to-end encryption…</span>
+                </div>
+              ) : loadingMessages ? (
                 <div style={{ display: 'flex', justifyContent: 'center', padding: '32px' }}>
                   <Loader size={20} color="var(--accent)" style={{ animation: 'spin 1s linear infinite' }} />
                 </div>
