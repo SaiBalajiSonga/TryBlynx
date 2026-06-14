@@ -39,8 +39,17 @@ export function useWebRTC(peerId: string | null, isInitiator: boolean = false) {
 
   const incomingSignals = useWebRTCStore((s) => s.incomingSignals);
 
+  // Buffer for ICE candidates that arrive before setRemoteDescription.
+  // Declared here (above initWebRTC) so initWebRTC can clear it on each
+  // new peer session via earlyCandidates.current = [].
+  const earlyCandidates = useRef<any[]>([]);
+
   const initWebRTC = useCallback(async () => {
     if (!peerId) return;
+    // Clear any ICE candidates buffered for a previous peer session.
+    // Without this, stale candidates from the last call would be applied
+    // to the new RTCPeerConnection, causing silent addIceCandidate failures.
+    earlyCandidates.current = [];
     try {
       const iceServers = await getIceServers();
       
@@ -118,7 +127,6 @@ export function useWebRTC(peerId: string | null, isInitiator: boolean = false) {
     };
   }, [initWebRTC]);
 
-  const earlyCandidates = useRef<any[]>([]);
 
   useEffect(() => {
     if (!isReady || !peerConnection.current || !peerId) return;
