@@ -187,24 +187,6 @@ export function useWebSocket() {
     if (isConnecting || globalWs?.readyState === WebSocket.OPEN) return;
 
     isConnecting = true;
-
-    // Fast fail for auth: If the DB was wiped (e.g. docker reset),
-    // the WS connection will fail with a generic 1006.
-    // Fetch profile first to trigger the 401 clearAuth hook if needed.
-    try {
-      await fetch(`${(import.meta as any).env?.VITE_API_URL || 'http://localhost:8080/api'}/profile`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      }).then(r => {
-        if (r.status === 401) {
-          useAuthStore.getState().clearAuth();
-          throw new Error('Unauthorized');
-        }
-      });
-    } catch {
-      isConnecting = false;
-      return;
-    }
-
     setWsStatus('connecting');
 
     const WS_URL = ((import.meta as any).env?.VITE_WS_URL || 'ws://localhost:8080/ws');
