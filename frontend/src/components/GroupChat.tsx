@@ -72,8 +72,11 @@ export function GroupChat({ onUserClick }: GroupChatProps) {
   // Fetch groups list once on mount
   useEffect(() => {
     fetchGroups();
+  // fetchGroups is stable when id/navigate haven't changed.
+  // Including it here ensures a fresh fetch if the hook re-mounts
+  // with a different id (e.g. navigating directly to /app/groups/:id).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchGroups]);
 
   // When active group changes or WS reconnects: join WS room + load REST history + load members
   useEffect(() => {
