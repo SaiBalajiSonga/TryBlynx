@@ -35,6 +35,8 @@ const (
 	ContextKeyIsVIP contextKey = "isVIP"
 	// ContextKeyShadowbanned stores the user's shadowban status.
 	ContextKeyShadowbanned contextKey = "shadowbanned"
+	// ContextKeyIsAnonymous stores whether this is a guest account.
+	ContextKeyIsAnonymous contextKey = "isAnonymous"
 )
 
 // Middleware returns an HTTP middleware that extracts and validates
@@ -83,6 +85,7 @@ func Middleware(jwtSecret string) func(http.Handler) http.Handler {
 			ctx := context.WithValue(r.Context(), ContextKeyUserID, claims.UserID)
 			ctx = context.WithValue(ctx, ContextKeyIsVIP, claims.IsVIP)
 			ctx = context.WithValue(ctx, ContextKeyShadowbanned, claims.Shadowbanned)
+			ctx = context.WithValue(ctx, ContextKeyIsAnonymous, claims.IsAnonymous)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -113,4 +116,12 @@ func IsVIPFromContext(ctx context.Context) bool {
 func IsShadowbannedFromContext(ctx context.Context) bool {
 	sb, _ := ctx.Value(ContextKeyShadowbanned).(bool)
 	return sb
+}
+
+// IsAnonymousFromContext extracts the guest-account flag from the
+// request context. Returns false if the middleware has not run.
+// Use this for fast guest-blocking without a DB lookup.
+func IsAnonymousFromContext(ctx context.Context) bool {
+	anon, _ := ctx.Value(ContextKeyIsAnonymous).(bool)
+	return anon
 }

@@ -38,7 +38,7 @@ func (s *Server) GuestLoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token, err := auth.GenerateToken(
-		s.Config.JWTSecret, user.ID, false, false, s.Config.JWTExpiryHours,
+		s.Config.JWTSecret, user.ID, false, false, true, s.Config.JWTExpiryHours,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to generate token")
@@ -82,13 +82,8 @@ func (s *Server) StartDMHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Block anonymous users from DMing
-	caller, err := s.Store.GetUserByID(r.Context(), callerID)
-	if err != nil || caller == nil {
-		respondError(w, http.StatusInternalServerError, "failed to load user")
-		return
-	}
-	if caller.IsAnonymous {
+	// Block anonymous users from DMing — checked via JWT claim (no DB hit)
+	if auth.IsAnonymousFromContext(r.Context()) {
 		respondError(w, http.StatusForbidden, "guest accounts cannot send direct messages")
 		return
 	}
@@ -132,9 +127,8 @@ type friendActionRequest struct {
 func (s *Server) SendFriendRequestHandler(w http.ResponseWriter, r *http.Request) {
 	callerID := auth.UserIDFromContext(r.Context())
 
-	// Block anonymous users
-	caller, _ := s.Store.GetUserByID(r.Context(), callerID)
-	if caller != nil && caller.IsAnonymous {
+	// Block anonymous users — checked via JWT claim (no DB hit)
+	if auth.IsAnonymousFromContext(r.Context()) {
 		respondError(w, http.StatusForbidden, "guest accounts cannot send friend requests")
 		return
 	}

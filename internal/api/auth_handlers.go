@@ -148,7 +148,7 @@ func (s *Server) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 
 	// ── Generate JWT ─────────────────────────────────────────
 	token, err := auth.GenerateToken(
-		s.Config.JWTSecret, user.ID, user.IsVIP, user.Shadowbanned,
+		s.Config.JWTSecret, user.ID, user.IsVIP, user.Shadowbanned, false,
 		s.Config.JWTExpiryHours,
 	)
 	if err != nil {
@@ -230,7 +230,7 @@ func (s *Server) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	// ── Generate JWT ─────────────────────────────────────────
 	token, err := auth.GenerateToken(
-		s.Config.JWTSecret, user.ID, user.IsVIP, user.Shadowbanned,
+		s.Config.JWTSecret, user.ID, user.IsVIP, user.Shadowbanned, false,
 		s.Config.JWTExpiryHours,
 	)
 	if err != nil {

@@ -28,6 +28,9 @@ import (
 //   - IsVIP:        Whether the user has an active VIP subscription.
 //   - Shadowbanned: Whether the user is shadowbanned (used by the
 //     matchmaker to isolate them into the shadow pool).
+//   - IsAnonymous:  Whether the token belongs to a guest (ephemeral) account.
+//     Guest accounts have limited access — they cannot send friend requests,
+//     DMs, post to the feed, or update their profile.
 //
 // The RegisteredClaims embed provides standard fields: sub, iss,
 // iat, exp. The token is signed with HS256.
@@ -36,6 +39,7 @@ type Claims struct {
 	UserID       uuid.UUID `json:"uid"`
 	IsVIP        bool      `json:"vip"`
 	Shadowbanned bool      `json:"sb"`
+	IsAnonymous  bool      `json:"anon,omitempty"`
 }
 
 // GenerateToken creates a new signed JWT for the given user.
@@ -45,12 +49,13 @@ type Claims struct {
 //   - userID:       The user's UUID to embed in claims.
 //   - isVIP:        Current VIP status of the user.
 //   - shadowbanned: Current shadowban status of the user.
+//   - isAnonymous:  Whether this is a guest (ephemeral) account.
 //   - expiryHours:  Token lifetime in hours (from config.JWTExpiryHours).
 //
 // Returns:
 //   - string: The compact-serialized JWT string (header.payload.signature).
 //   - error:  Non-nil if signing fails (should not happen with valid key).
-func GenerateToken(secret string, userID uuid.UUID, isVIP, shadowbanned bool, expiryHours int) (string, error) {
+func GenerateToken(secret string, userID uuid.UUID, isVIP, shadowbanned, isAnonymous bool, expiryHours int) (string, error) {
 	now := time.Now()
 
 	claims := Claims{
@@ -63,6 +68,7 @@ func GenerateToken(secret string, userID uuid.UUID, isVIP, shadowbanned bool, ex
 		UserID:       userID,
 		IsVIP:        isVIP,
 		Shadowbanned: shadowbanned,
+		IsAnonymous:  isAnonymous,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

@@ -122,13 +122,8 @@ func (s *Server) SendDMHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── Block anonymous (guest) senders ──────────────────────
-	caller, err := s.Store.GetUserByID(r.Context(), userID)
-	if err != nil || caller == nil {
-		respondError(w, http.StatusInternalServerError, "failed to load user")
-		return
-	}
-	if caller.IsAnonymous {
+	// ── Block anonymous (guest) senders via JWT claim — no DB hit ──
+	if auth.IsAnonymousFromContext(r.Context()) {
 		respondError(w, http.StatusForbidden, "guest accounts cannot send direct messages")
 		return
 	}
@@ -164,10 +159,14 @@ func (s *Server) SendDMHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Populate SenderName so the REST response matches the WS message
-	// shape (handleDMMessage joins the username; REST path must too).
-	msg.SenderName = caller.Username
-	if caller.DisplayName != "" {
-		msg.SenderName = caller.DisplayName
+	// shape. Fetch caller here (after the fast guest-check above) only
+	// for the display name — one DB lookup, not two.
+	caller, err := s.Store.GetUserByID(r.Context(), userID)
+	if err == nil && caller != nil {
+		msg.SenderName = caller.Username
+		if caller.DisplayName != "" {
+			msg.SenderName = caller.DisplayName
+		}
 	}
 
 	respondJSON(w, http.StatusCreated, msg)
