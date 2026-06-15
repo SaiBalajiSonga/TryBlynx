@@ -194,6 +194,27 @@ func (s *Store) UpdateUserProfile(
 	return scanUser(row)
 }
 
+// UpdateUserInterests updates ONLY the interests column for a user.
+// Used by the matchmaker when a user supplies interests on the match screen.
+// This is intentionally narrow — it does NOT touch display_name, avatar_url,
+// or bio, which go through the profile review queue. Calling UpdateUserProfile
+// from the matchmaker path would pass the current DB values for those fields
+// back, potentially overwriting a pending review with stale data.
+func (s *Store) UpdateUserInterests(ctx context.Context, id uuid.UUID, interests []string) error {
+	if interests == nil {
+		interests = []string{}
+	}
+	tag, err := s.Pool.Exec(ctx,
+		`UPDATE users SET interests = $2, updated_at = NOW() WHERE id = $1`, id, interests)
+	if err != nil {
+		return fmt.Errorf("db: failed to update interests: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("db: user %s not found", id)
+	}
+	return nil
+}
+
 // SetUserVIP updates the is_vip flag for a user by their UUID.
 // Called by the Stripe webhook handler after a successful payment.
 //

@@ -635,17 +635,16 @@ func handleMatchFind(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	// If the user provided interests on the match screen, save them to their profile
+	// If the user provided interests on the match screen, save ONLY interests.
+	// Using UpdateUserProfile here would pass current DB values for display_name/
+	// avatar_url/bio back, silently cancelling any pending profile review for
+	// those fields. UpdateUserInterests only touches the interests column.
 	if p.Interests != nil {
-		user, err = c.Hub.Store.UpdateUserProfile(
-			context.Background(), c.UserID,
-			user.DisplayName, user.AvatarURL, user.Bio, user.Gender, user.Location, user.Language,
-			p.Interests, user.PublicKey,
-		)
-		if err != nil {
+		if err := c.Hub.Store.UpdateUserInterests(context.Background(), c.UserID, p.Interests); err != nil {
 			c.sendError("failed to save profile interests")
 			return
 		}
+		user.Interests = p.Interests
 	}
 
 	// Build ticket data for Redis
