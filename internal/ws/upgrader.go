@@ -143,6 +143,13 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		displayName = "User"
 	}
 
+	// Cross-check IsAnonymous against the DB for tokens issued before the
+	// 'anon' claim was added. A legacy guest token will have IsAnonymous=false
+	// from the JWT (zero value), but the DB record has is_anonymous=true.
+	// Trust the DB on this field to prevent legacy guest tokens from bypassing
+	// social feature gates.
+	isAnonymous := claims.IsAnonymous || user.IsAnonymous
+
 	client := &Client{
 		Hub:          h,
 		Conn:         conn,
@@ -150,7 +157,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		Username:     displayName,
 		IsVIP:        claims.IsVIP,
 		Shadowbanned: claims.Shadowbanned,
-		IsAnonymous:  claims.IsAnonymous,
+		IsAnonymous:  isAnonymous,
 		Send:         make(chan []byte, sendChannelSize),
 		joinedRooms:  make(map[string]bool),
 	}
