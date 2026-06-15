@@ -386,22 +386,29 @@ func (h *Hub) handleJoinRoom(req *RoomRequest) {
 // Pub/Sub channel and cleans up the room map entry.
 func (h *Hub) handleLeaveRoom(req *RoomRequest) {
 	if clients, ok := h.rooms[req.RoomID]; ok {
-		// Broadcast peer_left before removing
-		outbound := OutboundMessage{
-			Type: "chat.peer_left",
-			Payload: map[string]string{
-				"peer_id": req.Client.UserID.String(),
-			},
-		}
-		outData, _ := json.Marshal(outbound)
-		h.RDB.Publish(h.ctx, req.RoomID, outData)
-
+		// Broadcast peer_left after removing the client so the leaving
+		// user doesn't receive their own departure event.
+		// Include room_id so multi-room clients know which room it's for.
+		rawRoomID := strings.TrimPrefix(req.RoomID, "chat:room:")
 		delete(clients, req.Client)
 		if len(clients) == 0 {
 			delete(h.rooms, req.RoomID)
 			if err := h.pubsub.Unsubscribe(h.ctx, req.RoomID); err != nil {
 				log.Printf("ws-hub: Redis UNSUBSCRIBE %s failed: %v", req.RoomID, err)
 			}
+		}
+
+		// Only broadcast if there are still members left to receive it
+		if len(clients) > 0 {
+			outbound := OutboundMessage{
+				Type: "chat.peer_left",
+				Payload: map[string]string{
+					"peer_id": req.Client.UserID.String(),
+					"room_id": rawRoomID,
+				},
+			}
+			outData, _ := json.Marshal(outbound)
+			h.RDB.Publish(h.ctx, req.RoomID, outData)
 		}
 	}
 

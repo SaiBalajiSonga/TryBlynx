@@ -428,33 +428,17 @@ func handleChatLeave(c *Client, payload json.RawMessage) {
 	}
 
 	// Remove from Redis live presence tracking first
-	count, err := c.Hub.Store.RemoveRoomPresence(context.Background(), p.RoomID, c.UserID)
-	if err != nil {
+	if _, err := c.Hub.Store.RemoveRoomPresence(context.Background(), p.RoomID, c.UserID); err != nil {
 		log.Printf("ws-handler: failed to remove room presence: %v", err)
 	}
 
-	if count <= 0 {
-		// Broadcast peer_left BEFORE removing from the room so all
-		// current members (including other instances via Redis) learn
-		// that this user has left. Without this, peers would not know
-		// to update their presence UI until the next poll.
-		peerLeft := OutboundMessage{
-			Type: "chat.peer_left",
-			Payload: map[string]string{
-				"peer_id": c.UserID.String(),
-				"room_id": p.RoomID,
-			},
-		}
-		if peerLeftData, err := json.Marshal(peerLeft); err == nil {
-			c.Hub.broadcast <- &RoomBroadcast{RoomID: roomKey, Data: peerLeftData}
-		}
-	}
+	// peer_left broadcast is owned by Hub.handleLeaveRoom (fires after the
+	// client is atomically removed from h.rooms), so we don't duplicate it here.
+	// The Hub also adds room_id to the payload so multi-room clients know
+	// which room the departure belongs to.
 
-	// Request Hub to remove this client from the room
-	done := make(chan struct{})
-	c.Hub.leaveRoom <- &RoomRequest{Client: c, RoomID: roomKey, Done: done}
-	<-done
-
+	// Remove from Hub room (fire-and-forget — same pattern as chat.join)
+	c.Hub.leaveRoom <- &RoomRequest{Client: c, RoomID: roomKey, Done: nil}
 	delete(c.joinedRooms, roomKey)
 
 	c.sendJSON(OutboundMessage{
