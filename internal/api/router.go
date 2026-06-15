@@ -153,6 +153,9 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 		r.Get("/api/key-backup", s.GetKeyBackupHandler)
 		r.Put("/api/key-backup", s.SaveKeyBackupHandler)
 
+		// Account management
+		r.Delete("/api/account/delete", s.DeleteAccountHandler)
+
 		// Admin Group Management
 		r.Post("/api/admin/groups", s.AdminCreateGroupHandler)
 		r.Put("/api/admin/groups/{id}", s.AdminUpdateGroupHandler)
