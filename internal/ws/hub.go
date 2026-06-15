@@ -128,6 +128,11 @@ type Hub struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// presenceMu guards presenceDebounce — written from broadcastPresenceUpdate
+	// goroutines, which run off the Hub event loop.
+	presenceMu      sync.Mutex
+	presenceDebounce map[uuid.UUID]context.CancelFunc
 }
 
 // NewHub creates a new Hub with all dependencies wired and
@@ -162,6 +167,8 @@ func NewHub(store *db.Store, rdb *redis.Client, cfg *config.Config) *Hub {
 
 		ctx:    ctx,
 		cancel: cancel,
+
+		presenceDebounce: make(map[uuid.UUID]context.CancelFunc),
 	}
 
 	// Initialize Redis PubSub (no channels subscribed yet;
@@ -326,17 +333,44 @@ func (h *Hub) handleUnregister(client *Client) {
 }
 
 // broadcastPresenceUpdate sends a presence WS event to all connected friends of a user.
-// Runs in its own goroutine — never called directly from the Run() select loop —
-// so the Hub event loop is never blocked by DB queries or SendToUser calls.
+// Runs in its own goroutine — never blocks Hub.Run().
+//
+// Debouncing: on rapid connect/disconnect (network flap), multiple calls would
+// otherwise spawn concurrent goroutines each querying GetFriends and fanning out
+// to N friends. We cancel the previous in-flight goroutine for the same user
+// before launching a new one so only the latest state wins.
 func (h *Hub) broadcastPresenceUpdate(userID uuid.UUID, online bool) {
+	h.presenceMu.Lock()
+	if cancel, ok := h.presenceDebounce[userID]; ok {
+		cancel() // cancel previous in-flight goroutine for this user
+	}
+	ctx, cancel := context.WithCancel(h.ctx)
+	h.presenceDebounce[userID] = cancel
+	h.presenceMu.Unlock()
+
 	go func() {
-		// 1. Fetch friends from DB (blocking — must be off the Run goroutine)
-		friends, err := h.Store.GetFriends(context.Background(), userID)
-		if err != nil {
+		defer func() {
+			h.presenceMu.Lock()
+			// Only clean up if our cancel fn is still the current one
+			if h.presenceDebounce[userID] == cancel {
+				delete(h.presenceDebounce, userID)
+			}
+			h.presenceMu.Unlock()
+			cancel()
+		}()
+
+		// 500ms debounce window — rapid flaps only fire the last state
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-ctx.Done():
 			return
 		}
 
-		// 2. Prepare payload
+		friends, err := h.Store.GetFriends(ctx, userID)
+		if err != nil || ctx.Err() != nil {
+			return
+		}
+
 		payload, _ := json.Marshal(map[string]interface{}{
 			"type": "presence.update",
 			"payload": map[string]interface{}{
@@ -346,8 +380,10 @@ func (h *Hub) broadcastPresenceUpdate(userID uuid.UUID, online bool) {
 			},
 		})
 
-		// 3. Send to each friend if they are connected
 		for _, f := range friends {
+			if ctx.Err() != nil {
+				return
+			}
 			var friendID uuid.UUID
 			if f.RequesterID == userID {
 				friendID = f.AddresseeID
