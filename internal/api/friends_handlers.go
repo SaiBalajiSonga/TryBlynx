@@ -185,9 +185,12 @@ func (s *Server) SendFriendRequestHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-
+	// Fetch caller's profile for the WS notification name.
+	// This is intentionally after the friendship insert — we only pay
+	// the DB cost when the insert actually succeeded.
 	callerName := ""
-	if caller != nil {
+	caller, err := s.Store.GetUserByID(r.Context(), callerID)
+	if err == nil && caller != nil {
 		callerName = caller.Username
 		if caller.DisplayName != "" {
 			callerName = caller.DisplayName
