@@ -150,6 +150,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		Username:     displayName,
 		IsVIP:        claims.IsVIP,
 		Shadowbanned: claims.Shadowbanned,
+		IsAnonymous:  claims.IsAnonymous,
 		Send:         make(chan []byte, sendChannelSize),
 		joinedRooms:  make(map[string]bool),
 	}

@@ -490,13 +490,9 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 
 	ctx := context.Background()
 
-	// Block anonymous users from sending DMs via WS
-	sender, err := c.Hub.Store.GetUserByID(ctx, c.UserID)
-	if err != nil || sender == nil {
-		c.sendError("failed to load user profile")
-		return
-	}
-	if sender.IsAnonymous {
+	// Block anonymous users from sending DMs via WS — check JWT claim on
+	// Client (no DB hit). Populated from claims.IsAnonymous in upgrader.go.
+	if c.IsAnonymous {
 		c.sendError("guest accounts cannot send direct messages")
 		return
 	}
