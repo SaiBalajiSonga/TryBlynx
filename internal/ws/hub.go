@@ -457,38 +457,48 @@ func (h *Hub) handleRedisMessage(msg *redis.Message) {
 
 // removeClientFromAllRooms evicts a client from every room they
 // belong to. Unsubscribes from Redis channels that become empty.
+// Redis presence cleanup runs in a background goroutine so that
+// Hub.Run() is not blocked by Redis round-trips on disconnect.
 func (h *Hub) removeClientFromAllRooms(client *Client) {
 	for roomID, clients := range h.rooms {
-		if _, ok := clients[client]; ok {
-			// Remove from Redis live presence tracking first if it's a chat room
-			if strings.HasPrefix(roomID, "chat:room:") {
-				rawRoomID := strings.TrimPrefix(roomID, "chat:room:")
-				count, err := h.Store.RemoveRoomPresence(context.Background(), rawRoomID, client.UserID)
-				if err != nil {
+		if _, ok := clients[client]; !ok {
+			continue
+		}
+
+		rawRoomID := strings.TrimPrefix(roomID, "chat:room:")
+
+		delete(clients, client)
+		if len(clients) == 0 {
+			delete(h.rooms, roomID)
+			if err := h.pubsub.Unsubscribe(h.ctx, roomID); err != nil {
+				log.Printf("ws-hub: Redis UNSUBSCRIBE %s on cleanup failed: %v", roomID, err)
+			}
+		}
+
+		// Only broadcast peer_left for proper chat rooms (not ephemeral match rooms)
+		// and only when there are still members to receive it.
+		if strings.HasPrefix(roomID, "chat:room:") && len(clients) > 0 {
+			outbound := OutboundMessage{
+				Type: "chat.peer_left",
+				Payload: map[string]string{
+					"peer_id": client.UserID.String(),
+					"room_id": rawRoomID,
+				},
+			}
+			outData, _ := json.Marshal(outbound)
+			h.RDB.Publish(h.ctx, roomID, outData)
+		}
+
+		// Remove Redis room presence off the Run() goroutine — it's a
+		// blocking network call that must not stall the Hub event loop.
+		if strings.HasPrefix(roomID, "chat:room:") {
+			roomIDCopy := rawRoomID
+			userIDCopy := client.UserID
+			go func() {
+				if _, err := h.Store.RemoveRoomPresence(context.Background(), roomIDCopy, userIDCopy); err != nil {
 					log.Printf("ws-hub: failed to remove room presence on disconnect: %v", err)
 				}
-
-				if count <= 0 {
-					// Broadcast peer_left before removing
-					outbound := OutboundMessage{
-						Type: "chat.peer_left",
-						Payload: map[string]string{
-							"peer_id": client.UserID.String(),
-							"room_id": rawRoomID,
-						},
-					}
-					outData, _ := json.Marshal(outbound)
-					h.RDB.Publish(h.ctx, roomID, outData)
-				}
-			}
-
-			delete(clients, client)
-			if len(clients) == 0 {
-				delete(h.rooms, roomID)
-				if err := h.pubsub.Unsubscribe(h.ctx, roomID); err != nil {
-					log.Printf("ws-hub: Redis UNSUBSCRIBE %s on cleanup failed: %v", roomID, err)
-				}
-			}
+			}()
 		}
 	}
 }
