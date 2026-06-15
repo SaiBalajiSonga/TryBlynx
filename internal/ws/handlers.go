@@ -497,8 +497,10 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	// Friendship gate — only friends can DM
-	isFriend, err := c.Hub.Store.IsFriend(ctx, c.UserID, recipientID)
+	// Friendship gate — only friends can DM.
+	// Uses Redis-cached result (60s TTL) to avoid a full DB round-trip
+	// on every message. Falls back to DB on cache miss.
+	isFriend, err := c.Hub.Store.IsFriendCached(ctx, c.UserID, recipientID)
 	if err != nil {
 		c.sendError("failed to verify friendship")
 		return

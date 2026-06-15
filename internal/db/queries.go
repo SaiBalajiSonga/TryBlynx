@@ -1238,6 +1238,38 @@ func (s *Store) IsFriend(ctx context.Context, userA, userB uuid.UUID) (bool, err
 	return exists, err
 }
 
+// IsFriendCached checks friendship via a 60-second Redis cache to reduce
+// DB load on the WS DM hot path. Falls back to IsFriend on cache miss or
+// Redis errors. Cache key is symmetric: always sorted (minID, maxID).
+// Invalidate by deleting the key when friendship status changes (accept/remove/block).
+func (s *Store) IsFriendCached(ctx context.Context, userA, userB uuid.UUID) (bool, error) {
+	// Canonical key: sort IDs so A↔B and B↔A hit the same entry
+	a, b := userA.String(), userB.String()
+	if a > b {
+		a, b = b, a
+	}
+	cacheKey := "friend_cache:" + a + ":" + b
+
+	cached, err := s.Redis.Get(ctx, cacheKey).Result()
+	if err == nil {
+		return cached == "1", nil
+	}
+
+	// Cache miss — query DB
+	isFriend, err := s.IsFriend(ctx, userA, userB)
+	if err != nil {
+		return false, err
+	}
+
+	val := "0"
+	if isFriend {
+		val = "1"
+	}
+	// 60-second TTL — short enough that unfriend/block takes effect quickly
+	s.Redis.Set(ctx, cacheKey, val, 60*time.Second)
+	return isFriend, nil
+}
+
 // ══════════════════════════════════════════════════════════════
 // NOTIFICATIONS
 // ══════════════════════════════════════════════════════════════
