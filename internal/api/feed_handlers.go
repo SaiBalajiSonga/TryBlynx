@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"tryblynx/internal/auth"
+	"tryblynx/internal/models"
 )
 
 // createFeedPostRequest defines the JSON body for POST /api/feed.
@@ -26,10 +27,28 @@ type createFeedPostRequest struct {
 	Body string `json:"body"` // 1-5000 characters
 }
 
-// feedResponse wraps the paginated feed results.
-type feedResponse struct {
-	Posts  interface{} `json:"posts"`
-	Count int         `json:"count"`
+// feedPostPublic is the API response shape for a feed post.
+// Author is a *PublicUser (not *User) to prevent email leakage.
+type feedPostPublic struct {
+	ID        interface{}       `json:"id"`
+	AuthorID  interface{}       `json:"author_id"`
+	Body      string            `json:"body"`
+	CreatedAt interface{}       `json:"created_at"`
+	Author    *models.PublicUser `json:"author,omitempty"`
+}
+
+func toFeedPostPublic(p *models.FeedPost) feedPostPublic {
+	fp := feedPostPublic{
+		ID:        p.ID,
+		AuthorID:  p.AuthorID,
+		Body:      p.Body,
+		CreatedAt: p.CreatedAt,
+	}
+	if p.Author != nil {
+		pub := toPublicUser(p.Author)
+		fp.Author = &pub
+	}
+	return fp
 }
 
 // GetFeedHandler handles GET /api/feed.
@@ -78,9 +97,14 @@ func (s *Server) GetFeedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, feedResponse{
-		Posts: posts,
-		Count: len(posts),
+	publicPosts := make([]feedPostPublic, len(posts))
+	for i := range posts {
+		publicPosts[i] = toFeedPostPublic(&posts[i])
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"posts": publicPosts,
+		"count": len(publicPosts),
 	})
 }
 
@@ -131,5 +155,5 @@ func (s *Server) CreateFeedPostHandler(w http.ResponseWriter, r *http.Request) {
 	author, _ := s.Store.GetUserByID(r.Context(), userID)
 	post.Author = author
 
-	respondJSON(w, http.StatusCreated, post)
+	respondJSON(w, http.StatusCreated, toFeedPostPublic(post))
 }
