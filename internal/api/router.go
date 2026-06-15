@@ -80,7 +80,7 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 	s.Router.Use(middleware.RealIP)
 	s.Router.Use(middleware.Logger)
 	s.Router.Use(middleware.Recoverer)
-	s.Router.Use(corsMiddleware)
+	s.Router.Use(corsMiddleware(cfg.AllowedOrigin))
 
 	// ── Public routes (no authentication) ─────────────────────
 	s.Router.Post("/api/register", s.RegisterHandler)
@@ -201,21 +201,26 @@ func respondError(w http.ResponseWriter, status int, message string) {
 // CORS Middleware
 // ══════════════════════════════════════════════════════════════
 
-// corsMiddleware adds permissive CORS headers for local development.
-// In production, Access-Control-Allow-Origin should be restricted
-// to the actual frontend domain.
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Upgrade, Connection")
-		w.Header().Set("Access-Control-Max-Age", "86400")
+// corsMiddleware returns a handler that adds CORS headers.
+// The allowed origin is read from configuration rather than being
+// hardcoded, so the same binary works in both local dev and production.
+//
+// Parameters:
+//   - origin: The value for Access-Control-Allow-Origin.
+func corsMiddleware(origin string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Upgrade, Connection")
+			w.Header().Set("Access-Control-Max-Age", "86400")
 
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r)
+		})
+	}
 }

@@ -63,6 +63,11 @@ type Config struct {
 	// ServerPort is the HTTP listen port.
 	// Default: 8080.
 	ServerPort string
+
+	// AllowedOrigin is the value sent in the Access-Control-Allow-Origin
+	// header. Defaults to http://localhost:5173 for local development.
+	// Set ALLOWED_ORIGIN in production to the actual frontend domain.
+	AllowedOrigin string
 }
 
 // Load reads configuration from environment variables, applies
@@ -85,6 +90,7 @@ func Load() (*Config, error) {
 		ServerPort:          getEnv("SERVER_PORT", "8080"),
 		DBMaxConns:          int32(getEnvInt("DB_MAX_CONNS", 100)),
 		DBMinConns:          int32(getEnvInt("DB_MIN_CONNS", 10)),
+		AllowedOrigin:       getEnv("ALLOWED_ORIGIN", "http://localhost:5173"),
 	}
 
 	// ── Validate required fields ─────────────────────────────

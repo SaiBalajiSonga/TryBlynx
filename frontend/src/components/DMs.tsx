@@ -272,7 +272,7 @@ export function DMs() {
     }
 
     if (sendMessage) {
-      sendMessage('dm.message', { recipient_id: activeChat.peer_id, body });
+      sendMessage('dm.message', { recipient_id: activeChat.peer_id, conversation_id: id, body });
     } else {
       console.error('[DMs] WebSocket not connected');
     }

@@ -16,6 +16,9 @@ let globalSendMessage: ((type: string, payload: unknown) => void) | null = null;
 // Module-level navigate ref so toast onClick closures always dispatch
 // via the latest router instance, even after re-renders.
 let globalNavigate: ((path: string) => void) | null = null;
+// Module-level connect ref so the reconnect timer closure always calls
+// the latest connect function (avoids stale-token edge case on re-render).
+let connectRef: { current: (() => Promise<void>) | null } = { current: null };
 
 export function useWebSocket() {
   const navigate = useNavigate();
@@ -219,7 +222,7 @@ export function useWebSocket() {
 
       // Exponential backoff reconnect
       const delay = Math.min(3000 + Math.random() * 2000, 15000);
-      reconnectTimer = setTimeout(() => connect(), delay);
+      reconnectTimer = setTimeout(() => connectRef.current?.(), delay);
     };
 
     ws.onerror = () => {
@@ -250,6 +253,9 @@ export function useWebSocket() {
   globalSendMessage = sendMessage;
   // Keep the module-level ref in sync with the latest navigate instance.
   globalNavigate = navigate;
+  // Keep the module-level connect ref in sync so the reconnect timer
+  // closure always dispatches through the latest token-aware function.
+  connectRef.current = connect;
 
   return { sendMessage };
 }

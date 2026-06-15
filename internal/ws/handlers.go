@@ -169,8 +169,9 @@ type chatLeavePayload struct {
 }
 
 type dmMessagePayload struct {
-	RecipientID string `json:"recipient_id"` // Target user UUID
-	Body        string `json:"body"`         // 1-5000 characters
+	RecipientID    string `json:"recipient_id"`     // Target user UUID
+	ConversationID string `json:"conversation_id"`  // Optional — skips GetOrCreateDM when provided
+	Body           string `json:"body"`             // 1-5000 characters
 }
 
 type matchFindPayload struct {
@@ -510,13 +511,25 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	// Get or create DM conversation atomically
-	convID, err := c.Hub.Store.GetOrCreateDM(ctx, c.UserID, recipientID)
-	if err != nil {
-		log.Printf("ws-handler: failed to get/create DM for %s→%s: %v",
-			c.UserID, recipientID, err)
-		c.sendError("failed to initialize conversation")
-		return
+	// Resolve conversation ID — use the client-supplied one when available
+	// to skip the GetOrCreateDM DB round-trip entirely. The frontend always
+	// knows the conversation_id once the DM thread has been opened.
+	var convID uuid.UUID
+	if p.ConversationID != "" {
+		convID, err = uuid.Parse(p.ConversationID)
+		if err != nil {
+			c.sendError("invalid conversation_id: must be a valid UUID")
+			return
+		}
+	} else {
+		// First-time send (or legacy client): look up / create the conversation
+		convID, err = c.Hub.Store.GetOrCreateDM(ctx, c.UserID, recipientID)
+		if err != nil {
+			log.Printf("ws-handler: failed to get/create DM for %s→%s: %v",
+				c.UserID, recipientID, err)
+			c.sendError("failed to initialize conversation")
+			return
+		}
 	}
 
 	// Persist message to PostgreSQL
