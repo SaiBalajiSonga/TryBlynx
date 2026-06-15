@@ -23,6 +23,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"tryblynx/internal/models"
+
 	"tryblynx/internal/auth"
 )
 
@@ -255,6 +257,7 @@ func (s *Server) ListGroupsHandler(w http.ResponseWriter, r *http.Request) {
 
 // GetGroupMembersHandler handles GET /api/groups/{id}/members.
 // Returns all active live members currently looking at the conversation.
+// Returns PublicUser (no email, no sensitive fields) — same shape as search/profile-by-ID.
 func (s *Server) GetGroupMembersHandler(w http.ResponseWriter, r *http.Request) {
 	convIDStr := chi.URLParam(r, "id")
 	convID, err := uuid.Parse(convIDStr)
@@ -277,9 +280,15 @@ func (s *Server) GetGroupMembersHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// 3. Convert to PublicUser — never expose email or internal moderation fields
+	pubMembers := make([]models.PublicUser, len(members))
+	for i, u := range members {
+		pubMembers[i] = toPublicUser(&u)
+	}
+
 	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"members": members,
-		"count":   len(members),
+		"members": pubMembers,
+		"count":   len(pubMembers),
 	})
 }
 
