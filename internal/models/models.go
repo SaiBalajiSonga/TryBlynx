@@ -59,6 +59,8 @@ type User struct {
 // PublicUser is a safe view of a User, exposing only public-safe fields.
 // Used in search results and profile views — anonymous users see this
 // shape of other users (no email, device info, or internal flags).
+// Role fields (IsAdmin, IsModerator, IsDeveloper) are included because
+// they are social trust signals (role badges), not security-sensitive data.
 type PublicUser struct {
 	ID          uuid.UUID `json:"id"`
 	Username    string    `json:"username"`
@@ -70,6 +72,9 @@ type PublicUser struct {
 	Language    string    `json:"language"`
 	Interests   []string  `json:"interests"`
 	IsVIP       bool      `json:"is_vip"`
+	IsAdmin     bool      `json:"is_admin"`
+	IsModerator bool      `json:"is_moderator"`
+	IsDeveloper bool      `json:"is_developer"`
 	IsAnonymous bool      `json:"is_anonymous"`
 	CreatedAt   time.Time `json:"created_at"`
 }

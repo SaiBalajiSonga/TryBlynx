@@ -39,6 +39,9 @@ func toPublicUser(u *models.User) models.PublicUser {
 		Language:    u.Language,
 		Interests:   u.Interests,
 		IsVIP:       u.IsVIP,
+		IsAdmin:     u.IsAdmin,
+		IsModerator: u.IsModerator,
+		IsDeveloper: u.IsDeveloper,
 		IsAnonymous: u.IsAnonymous,
 		CreatedAt:   u.CreatedAt,
 	}
