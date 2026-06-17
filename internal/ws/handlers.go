@@ -299,11 +299,23 @@ func handleChatMessage(c *Client, payload json.RawMessage) {
 
 	// Persist message to PostgreSQL
 	convID, _ := uuid.Parse(p.RoomID) // Already validated on join
-	msg, err := c.Hub.Store.CreateMessage(context.Background(), convID, c.UserID, p.Body)
-	if err != nil {
-		log.Printf("ws-handler: failed to persist chat message for user %s: %v", c.UserID, err)
-		c.sendError("failed to send message")
-		return
+	var msg *models.Message
+	
+	if c.Shadowbanned {
+		// Stealth drop: fake the message ID and skip DB/broadcast
+		msg = &models.Message{
+			ID:        uuid.New(),
+			Body:      p.Body,
+			CreatedAt: time.Now(),
+		}
+	} else {
+		var err error
+		msg, err = c.Hub.Store.CreateMessage(context.Background(), convID, c.UserID, p.Body)
+		if err != nil {
+			log.Printf("ws-handler: failed to persist chat message for user %s: %v", c.UserID, err)
+			c.sendError("failed to send message")
+			return
+		}
 	}
 
 	// Build outbound message with full metadata
@@ -319,6 +331,15 @@ func handleChatMessage(c *Client, payload json.RawMessage) {
 		},
 	}
 	outData, _ := json.Marshal(outbound)
+
+	if c.Shadowbanned {
+		// Fake confirmation to sender only
+		select {
+		case c.Send <- outData:
+		default:
+		}
+		return
+	}
 
 	// Publish to Redis → Hub receives via listenRedis → fans
 	// out to all local clients in the room (including sender)
@@ -533,11 +554,22 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 	}
 
 	// Persist message to PostgreSQL
-	msg, err := c.Hub.Store.CreateMessage(ctx, convID, c.UserID, p.Body)
-	if err != nil {
-		log.Printf("ws-handler: failed to persist DM for user %s: %v", c.UserID, err)
-		c.sendError("failed to send message")
-		return
+	var msg *models.Message
+	if c.Shadowbanned {
+		// Stealth drop
+		msg = &models.Message{
+			ID:        uuid.New(),
+			Body:      p.Body,
+			CreatedAt: time.Now(),
+		}
+	} else {
+		var err error
+		msg, err = c.Hub.Store.CreateMessage(ctx, convID, c.UserID, p.Body)
+		if err != nil {
+			log.Printf("ws-handler: failed to persist DM for user %s: %v", c.UserID, err)
+			c.sendError("failed to send message")
+			return
+		}
 	}
 
 	// Build outbound message
@@ -559,6 +591,10 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 	case c.Send <- outData:
 	default:
 		log.Printf("ws-handler: DM confirmation dropped for slow sender %s", c.UserID)
+	}
+
+	if c.Shadowbanned {
+		return // Do not deliver to peer
 	}
 
 	// Deliver to recipient (if online — otherwise they'll see

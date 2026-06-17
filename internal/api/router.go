@@ -85,7 +85,7 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 	// ── Public routes (no authentication) ─────────────────────
 	s.Router.Post("/api/register", s.RegisterHandler)
 	s.Router.Post("/api/login", s.LoginHandler)
-	s.Router.Post("/api/guest", s.GuestLoginHandler)
+
 	s.Router.Post("/api/webhook/stripe", s.StripeWebhookHandler)
 
 	s.Router.Get("/health", func(w http.ResponseWriter, r *http.Request) {

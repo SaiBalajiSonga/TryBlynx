@@ -145,10 +145,22 @@ func (s *Server) CreateFeedPostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Create post ──────────────────────────────────────────
-	post, err := s.Store.CreateFeedPost(r.Context(), userID, req.Body)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to create post")
-		return
+	var post *models.FeedPost
+	if auth.IsShadowbannedFromContext(r.Context()) {
+		// Stealth drop
+		post = &models.FeedPost{
+			ID:        uuid.New(),
+			AuthorID:  userID,
+			Body:      req.Body,
+			CreatedAt: time.Now(),
+		}
+	} else {
+		var err error
+		post, err = s.Store.CreateFeedPost(r.Context(), userID, req.Body)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to create post")
+			return
+		}
 	}
 
 	// Attach author info for the response

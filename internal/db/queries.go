@@ -580,14 +580,14 @@ func (s *Store) UnblockUser(ctx context.Context, blockerID, blockedID uuid.UUID)
 }
 
 // ReportUser files a new report.
-func (s *Store) ReportUser(ctx context.Context, reporterID, reportedID uuid.UUID, messageID *uuid.UUID, reason string) error {
+func (s *Store) ReportUser(ctx context.Context, reporterID, reportedID uuid.UUID, messageID *uuid.UUID, reason string, proofURL *string) error {
 	if reporterID == reportedID {
 		return fmt.Errorf("db: cannot report self")
 	}
 	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO user_reports (reporter_id, reported_id, message_id, reason)
-		VALUES ($1, $2, $3, $4)
-	`, reporterID, reportedID, messageID, reason)
+		INSERT INTO user_reports (reporter_id, reported_id, message_id, reason, proof_url)
+		VALUES ($1, $2, $3, $4, $5)
+	`, reporterID, reportedID, messageID, reason, proofURL)
 	return err
 }
 
@@ -1353,33 +1353,6 @@ func (s *Store) MarkNotificationsRead(ctx context.Context, userID uuid.UUID) err
 	return err
 }
 
-// ══════════════════════════════════════════════════════════════
-// ANONYMOUS / GUEST USERS
-// ══════════════════════════════════════════════════════════════
-
-// CreateGuestUser creates an ephemeral anonymous user expiring in 24 hours.
-func (s *Store) CreateGuestUser(ctx context.Context, username string) (*models.User, error) {
-	expiresAt := time.Now().Add(24 * time.Hour)
-	fakeEmail := username + "@guest.tryblynx.internal"
-	row := s.Pool.QueryRow(ctx, `
-		INSERT INTO users (username, email, password_hash, is_anonymous, expires_at)
-		VALUES ($1, $2, '', TRUE, $3)
-		RETURNING `+userColumns,
-		username, fakeEmail, expiresAt,
-	)
-	return scanUser(row)
-}
-
-// PurgeExpiredGuests deletes anonymous users past their expiry. Returns count deleted.
-func (s *Store) PurgeExpiredGuests(ctx context.Context) (int64, error) {
-	tag, err := s.Pool.Exec(ctx,
-		`DELETE FROM users WHERE is_anonymous = TRUE AND expires_at < NOW()`,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("db: purge guests: %w", err)
-	}
-	return tag.RowsAffected(), nil
-}
 
 // ══════════════════════════════════════════════════════════════
 // PROFILE REVIEWS (Moderation Queue)

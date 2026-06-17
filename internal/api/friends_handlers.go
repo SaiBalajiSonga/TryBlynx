@@ -26,48 +26,6 @@ import (
 // GUEST / ANONYMOUS LOGIN
 // ══════════════════════════════════════════════════════════════
 
-// GuestLoginHandler handles POST /api/guest.
-// Creates an ephemeral anonymous account and returns a JWT.
-// No email or password required. Account expires in 24h.
-func (s *Server) GuestLoginHandler(w http.ResponseWriter, r *http.Request) {
-	username := "guest_" + randomAlphanumeric(8)
-
-	user, err := s.Store.CreateGuestUser(r.Context(), username)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to create guest account")
-		return
-	}
-
-	token, err := auth.GenerateToken(
-		s.Config.JWTSecret, user.ID, false, false, true, s.Config.JWTExpiryHours,
-	)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to generate token")
-		return
-	}
-
-	respondJSON(w, http.StatusCreated, authResponse{Token: token, User: user})
-}
-
-// randomAlphanumeric generates a cryptographically random lowercase
-// alphanumeric string of length n. Used for guest usernames.
-// Uses crypto/rand so the output is unpredictable — math/rand would
-// allow an attacker to enumerate or predict guest account names.
-func randomAlphanumeric(n int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	charsetLen := big.NewInt(int64(len(charset)))
-	b := make([]byte, n)
-	for i := range b {
-		idx, err := rand.Int(rand.Reader, charsetLen)
-		if err != nil {
-			// Fallback: use a zero byte (degenerate but never panics)
-			b[i] = charset[0]
-			continue
-		}
-		b[i] = charset[idx.Int64()]
-	}
-	return string(b)
-}
 
 // ══════════════════════════════════════════════════════════════
 // START DM (friendship-gated)

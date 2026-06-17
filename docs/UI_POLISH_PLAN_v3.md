@@ -561,3 +561,29 @@ silently picking one.
    party) and backend work to store/manage subscription endpoints that
    isn't scoped anywhere in this plan. Either scope it properly as its
    own phase or explicitly cut it from this round.
+
+---
+
+## Agentic Review & Additional Recommendations (v3)
+
+Based on a thorough review of modern web standards, UI/UX best practices for synchronous communication apps, and trust/safety mechanisms, here are additional points and an overall grade for this plan.
+
+### Additional Recommendations to Consider
+
+10. **Device Permission UX (Camera/Mic):** For a video chat app, *when* and *how* you ask for permissions is critical for trust. Never prompt on page load. Add a step in Phase 4 (VideoRoom) for a "soft prompt" explaining why camera/mic access is needed before triggering the native browser permission dialog. Include an elegant fallback UI if the user denies permission (e.g., instructions on how to re-enable).
+
+11. **Network Resilience & Reconnection UX:** While Phase 7 mentions optimistic UI, it misses WebSocket reconnection states. Mobile users frequently switch between WiFi and Cellular. Add a subtle, non-intrusive "Reconnecting..." indicator (perhaps in the TopBar or near the chat input) and ensure message history isn't lost during the blip.
+
+12. **Empty States & Onboarding:** Phase 4 should explicitly cover empty states for DMs and Group Chats. A completely blank screen feels broken or dead. Include friendly, illustrated empty states (using the duotone icons) with clear Calls to Action (e.g., "Match with someone new to start your first Blynx chat").
+
+13. **Active AI Moderation Visibility:** Since the landing page promises AI moderation, reinforce this trust inside the product. Consider adding a subtle "Shield" icon or "Protected by AI" text in the chat room headers to remind users they aren't completely on their own, complementing the Phase 0 report buttons.
+
+### Overall Plan Grade: A (Excellent)
+
+**Breakdown:**
+- **Trust & Safety (A+):** Pulling Phase 0 out to be the absolute first thing built is a masterstroke. The demographic relies entirely on trust, and prioritizing functional, visible safety tools over aesthetic changes shows deep product understanding.
+- **Architecture & Design System (A):** Breaking down monolithic 600-line components and moving to a token-based CSS system (Midnight Ember) is standard but executed perfectly here. The sound design (off by default) is a massive improvement over v2.
+- **Process & Pragmatism (A):** Adding the User Testing Checkpoint (Phase 4.5) is the most mature addition. It acknowledges that no amount of engineering can validate "vibes" and trust.
+- **Edge Cases & Realism (B+):** The appendix correctly identifies background sync and push notifications as risky scopes, which prevents timeline blowouts. The minor deduction here is the omission of the camera/mic permission flow and WebSocket reconnect UX (addressed in the additions above).
+
+**Conclusion:** This is a highly actionable, user-centric, and realistic engineering plan. Proceed with confidence.

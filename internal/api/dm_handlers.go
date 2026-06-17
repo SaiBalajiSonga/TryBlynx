@@ -148,10 +148,23 @@ func (s *Server) SendDMHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Persist message ──────────────────────────────────────
-	msg, err := s.Store.CreateMessage(r.Context(), convID, userID, req.Body)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to send message")
-		return
+	var msg *models.Message
+	if auth.IsShadowbannedFromContext(r.Context()) {
+		// Stealth drop
+		msg = &models.Message{
+			ID:             uuid.New(),
+			ConversationID: convID,
+			SenderID:       &userID,
+			Body:           req.Body,
+			CreatedAt:      time.Now(),
+		}
+	} else {
+		var err error
+		msg, err = s.Store.CreateMessage(r.Context(), convID, userID, req.Body)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to send message")
+			return
+		}
 	}
 
 	// Populate SenderName so the REST response matches the WS message

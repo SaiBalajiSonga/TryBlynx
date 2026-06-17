@@ -17,6 +17,7 @@ type reportRequest struct {
 	ReportedID uuid.UUID  `json:"reported_id"`
 	MessageID  *uuid.UUID `json:"message_id,omitempty"`
 	Reason     string     `json:"reason"`
+	ProofURL   *string    `json:"proof_url,omitempty"`
 }
 
 // BlockUserHandler handles POST /api/moderation/block
@@ -74,7 +75,7 @@ func (s *Server) ReportUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.Store.ReportUser(r.Context(), userID, req.ReportedID, req.MessageID, req.Reason); err != nil {
+	if err := s.Store.ReportUser(r.Context(), userID, req.ReportedID, req.MessageID, req.Reason, req.ProofURL); err != nil {
 		if err.Error() == "db: cannot report self" {
 			respondError(w, http.StatusBadRequest, "cannot report yourself")
 			return
