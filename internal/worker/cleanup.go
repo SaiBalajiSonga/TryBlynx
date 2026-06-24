@@ -60,12 +60,12 @@ func purgeExpiredGuests(store *db.Store) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	n, err := store.PurgeExpiredGuests(ctx)
+	cmd, err := store.Pool.Exec(ctx, `DELETE FROM users WHERE is_anonymous = true AND expires_at < NOW()`)
 	if err != nil {
 		log.Printf("worker: failed to purge expired guests: %v", err)
 		return
 	}
-	if n > 0 {
+	if n := cmd.RowsAffected(); n > 0 {
 		log.Printf("worker: purged %d expired guest accounts", n)
 	}
 }

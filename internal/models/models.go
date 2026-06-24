@@ -101,23 +101,34 @@ type Conversation struct {
 // message preview, used when listing a user's conversations.
 type ConversationSummary struct {
 	Conversation
-	LastMessage   string     `json:"last_message,omitempty"`
-	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
-	IsOnline      bool       `json:"is_online,omitempty"`
-	LastActiveAt  *time.Time `json:"last_active_at,omitempty"`
+	LastMessage         string     `json:"last_message,omitempty"`
+	LastMessageAt       *time.Time `json:"last_message_at,omitempty"`
+	LastMessageSenderID *uuid.UUID `json:"last_message_sender_id,omitempty"`
+	IsOnline            bool       `json:"is_online,omitempty"`
+	LastActiveAt        *time.Time `json:"last_active_at,omitempty"`
 }
 
 // Message represents a single text message within a conversation.
 // SenderID is a pointer to handle system messages or deleted users
 // (ON DELETE SET NULL in the schema).
 type Message struct {
-	ID             uuid.UUID  `json:"id"`
-	ConversationID uuid.UUID  `json:"conversation_id"`
-	SenderID       *uuid.UUID `json:"sender_id,omitempty"`
-	SenderName     string     `json:"sender_name,omitempty"`
-	Body           string     `json:"body"`
-	IsEdited       bool       `json:"is_edited"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID             uuid.UUID         `json:"id"`
+	ConversationID uuid.UUID         `json:"conversation_id"`
+	SenderID       *uuid.UUID        `json:"sender_id,omitempty"`
+	SenderName     string            `json:"sender_name,omitempty"`
+	Body           string            `json:"body"`
+	IsEdited       bool              `json:"is_edited"`
+	CreatedAt      time.Time         `json:"created_at"`
+	ReplyToID      *uuid.UUID        `json:"reply_to_id,omitempty"`
+	ReplyToBody    string            `json:"reply_to_body,omitempty"`
+	Reactions      []MessageReaction `json:"reactions,omitempty"`
+}
+
+// MessageReaction represents grouped emoji reactions for a message.
+type MessageReaction struct {
+	Emoji string `json:"emoji"`
+	Count int    `json:"count"`
+	Me    bool   `json:"me"` // True if the requesting user applied this reaction
 }
 
 // ──────────────────────────────────────────────────────────────

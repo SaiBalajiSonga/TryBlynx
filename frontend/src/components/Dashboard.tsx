@@ -22,6 +22,8 @@ import { FriendsModal } from './FriendsModal';
 import { ModLog } from './ModLog';
 import { useWebSocket } from '../lib/useWebSocket';
 import { ToastContainer } from './ToastContainer';
+import { api } from '../lib/api';
+import { usePresenceStore } from '../store/presenceStore';
 
 function getSavedSidebarState(): boolean {
   try { return localStorage.getItem('sidebar_open') !== 'false'; } catch { return true; }
@@ -48,6 +50,18 @@ export function Dashboard() {
   useEffect(() => { 
     fetchNotifications(); 
     fetchPendingFriendsCount();
+    
+    // Fetch friends to populate initial online presence
+    api.getFriends().then(res => {
+      if (res && res.friends) {
+        usePresenceStore.getState().initializePresence(res.friends.map((f: any) => ({
+          id: f.peer_id,
+          is_online: f.is_online,
+          last_active_at: f.last_active_at
+        })));
+      }
+    }).catch(err => console.error('[Dashboard] Failed to fetch friends for presence:', err));
+
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
@@ -126,25 +140,25 @@ export function Dashboard() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--blynx-900)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--blynx-850)' }}>
 
       {/* ── Top Navbar ── */}
       <header style={{
-        height: '56px', flexShrink: 0,
-        background: 'rgba(13,14,18,0.92)', backdropFilter: 'blur(12px)',
-        borderBottom: '1px solid var(--border)',
+        height: '42px', flexShrink: 0,
+        background: '#080808', backdropFilter: 'blur(12px)',
+        borderBottom: 'none',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '0 16px', zIndex: 100, position: 'relative',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button onClick={toggleSidebar} style={navBtnStyle} title="Toggle sidebar">
-            <Menu size={20} />
+            <Menu size={18} />
           </button>
           <div onClick={() => navigate('/app')} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginLeft: '4px' }}>
-            <div style={{ width: '28px', height: '28px', background: 'var(--accent)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 12px var(--accent-glow)', flexShrink: 0 }}>
-              <Zap size={14} color="white" fill="white" />
+            <div style={{ width: '22px', height: '22px', background: 'var(--accent)', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 12px var(--accent-glow)', flexShrink: 0 }}>
+              <Zap size={11} color="white" fill="white" />
             </div>
-            <span style={{ fontWeight: 700, fontSize: '17px', color: 'white', letterSpacing: '-0.3px' }}>TryBlynx</span>
+            <span style={{ fontWeight: 700, fontSize: '14px', color: 'white', letterSpacing: '-0.3px' }}>TryBlynx</span>
           </div>
         </div>
 
@@ -159,7 +173,7 @@ export function Dashboard() {
               }}
               style={{ ...navBtnStyle, position: 'relative' }}
             >
-              <Bell size={19} />
+              <Bell size={17} />
               {unreadCount > 0 && (
                 <span style={badgeStyle('#ed4245')}>{unreadCount > 9 ? '9+' : unreadCount}</span>
               )}
@@ -203,7 +217,7 @@ export function Dashboard() {
 
           {/* Friends button */}
           <button id="friends-nav-btn" onClick={() => { setShowFriendsModal(true); markPendingFriendsSeen(); }} style={{ ...navBtnStyle, position: 'relative' }} title="Friends">
-            <Users size={19} />
+            <Users size={17} />
             {pendingFriendsCount > 0 && unseenPendingFriends && (
               <span style={badgeStyle('#ed4245')}>{pendingFriendsCount > 9 ? '9+' : pendingFriendsCount}</span>
             )}
@@ -211,7 +225,7 @@ export function Dashboard() {
 
           {/* DMs badge (real unread count) */}
           <button id="dms-nav-btn" onClick={() => navigate('/app/dms')} style={{ ...navBtnStyle, position: 'relative' }}>
-            <MessageSquare size={19} />
+            <MessageSquare size={17} />
             {totalDMUnread > 0 && (
               <span style={badgeStyle('var(--accent)')}>{totalDMUnread > 9 ? '9+' : totalDMUnread}</span>
             )}
@@ -223,7 +237,7 @@ export function Dashboard() {
               id="profile-menu-btn"
               onClick={() => setActiveDropdown(d => d === 'profile' ? null : 'profile')}
               style={{
-                width: '32px', height: '32px', borderRadius: '50%', border: 'none',
+                width: '28px', height: '28px', borderRadius: '50%', border: 'none',
                 cursor: 'pointer', padding: 0,
                 background: user?.is_vip ? 'linear-gradient(135deg, #faa61a, #ff6b35)' : 'linear-gradient(135deg, var(--accent), #7289da)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -282,7 +296,7 @@ export function Dashboard() {
 
         <aside style={{
           position: 'absolute', top: 0, left: 0, bottom: 0, zIndex: 50,
-          width: '220px', background: 'var(--blynx-850)', borderRight: '1px solid var(--border)',
+          width: '220px', background: 'var(--blynx-900)', borderRight: 'none',
           display: 'flex', flexDirection: 'column',
           transform: isSidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
           transition: 'transform 0.25s cubic-bezier(0.4,0,0.2,1)',
@@ -322,7 +336,7 @@ export function Dashboard() {
             })}
           </nav>
 
-          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--blynx-900)' }}>
+          <div style={{ padding: '12px 16px', borderTop: 'none', background: 'var(--blynx-900)' }}>
             <div onClick={() => user?.id && setSelectedProfileId(user.id)} style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
               <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px', fontWeight: 700, overflow: 'hidden', flexShrink: 0 }}>
                 {user?.avatar_url ? <img src={user.avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" /> : initials}
@@ -334,7 +348,7 @@ export function Dashboard() {
             </div>
           </div>
 
-          <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border)' }}>
+          <div style={{ padding: '10px 12px', borderTop: 'none' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '7px 10px', background: 'var(--blynx-800)', borderRadius: '8px' }}>
               <span className={`status-dot ${wsStatus}`} />
               <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{wsStatus}</span>

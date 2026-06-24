@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '../store/authStore';
+import { useUIStore } from '../store/uiStore';
 import { api } from '../lib/api';
 import { X, MapPin, Globe, Edit2, Shield, Crown, Code, ShieldAlert, Ban, UserPlus, UserCheck, UserX, MessageSquare, Clock, Loader } from 'lucide-react';
 import { SettingsView } from './Settings';
@@ -59,7 +60,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
   const handleAccept        = () => withLoading(async () => { await api.acceptFriendRequest(userId);  setFriendStatus('accepted');         showFb('You are now friends!'); });
   const handleDecline       = () => withLoading(async () => { await api.declineFriendRequest(userId); setFriendStatus('none'); });
   const handleRemoveFriend  = () => withLoading(async () => {
-    if (!window.confirm('Remove this friend?')) return;
+    if (!await useUIStore.getState().showConfirm('Remove Friend', 'Remove this friend?')) return;
     await api.removeFriend(userId);
     setFriendStatus('none');
   });
@@ -77,7 +78,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
     }
   };
   const handleBlock = async () => {
-    if (!window.confirm(`Block ${user.username}?`)) return;
+    if (!await useUIStore.getState().showConfirm('Block User', `Block ${user.username}?`)) return;
     try { await api.blockUser(user.id); showFb('User blocked.'); setTimeout(onClose, 1500); }
     catch (err: any) { showFb(err.message); }
   };

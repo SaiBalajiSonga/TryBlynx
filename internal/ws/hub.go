@@ -132,7 +132,11 @@ type Hub struct {
 	// presenceMu guards presenceDebounce — written from broadcastPresenceUpdate
 	// goroutines, which run off the Hub event loop.
 	presenceMu      sync.Mutex
-	presenceDebounce map[uuid.UUID]context.CancelFunc
+	presenceDebounce map[uuid.UUID]*cancelMarker
+}
+
+type cancelMarker struct {
+	cancel context.CancelFunc
 }
 
 // NewHub creates a new Hub with all dependencies wired and
@@ -168,7 +172,7 @@ func NewHub(store *db.Store, rdb *redis.Client, cfg *config.Config) *Hub {
 		ctx:    ctx,
 		cancel: cancel,
 
-		presenceDebounce: make(map[uuid.UUID]context.CancelFunc),
+		presenceDebounce: make(map[uuid.UUID]*cancelMarker),
 	}
 
 	// Initialize Redis PubSub (no channels subscribed yet;
@@ -341,18 +345,19 @@ func (h *Hub) handleUnregister(client *Client) {
 // before launching a new one so only the latest state wins.
 func (h *Hub) broadcastPresenceUpdate(userID uuid.UUID, online bool) {
 	h.presenceMu.Lock()
-	if cancel, ok := h.presenceDebounce[userID]; ok {
-		cancel() // cancel previous in-flight goroutine for this user
+	if marker, ok := h.presenceDebounce[userID]; ok {
+		marker.cancel() // cancel previous in-flight goroutine for this user
 	}
 	ctx, cancel := context.WithCancel(h.ctx)
-	h.presenceDebounce[userID] = cancel
+	marker := &cancelMarker{cancel: cancel}
+	h.presenceDebounce[userID] = marker
 	h.presenceMu.Unlock()
 
 	go func() {
 		defer func() {
 			h.presenceMu.Lock()
 			// Only clean up if our cancel fn is still the current one
-			if h.presenceDebounce[userID] == cancel {
+			if h.presenceDebounce[userID] == marker {
 				delete(h.presenceDebounce, userID)
 			}
 			h.presenceMu.Unlock()

@@ -160,6 +160,42 @@ export async function decryptMessage(
 }
 
 /**
+ * Decrypt a message when we don't know who sent it (useful for chat previews).
+ * Tries both key_s and key_r.
+ */
+export async function decryptMessageUnknownSender(
+  body: string,
+  privKeyJwk: JsonWebKey,
+): Promise<string> {
+  if (!body.startsWith('{')) return body;
+  let envelope: Partial<E2EEnvelope>;
+  try { envelope = JSON.parse(body); } catch { return body; }
+  if (!envelope.iv || !envelope.ct || !envelope.key_s || !envelope.key_r) return body;
+
+  try {
+    const privKey = await importPrivateKeyFromJwk(privKeyJwk);
+    const iv = b64decode(envelope.iv!);
+    const ct = b64decode(envelope.ct!);
+
+    async function tryKey(wrappedB64: string) {
+      const wrappedKey = b64decode(wrappedB64);
+      const rawAes = await window.crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privKey, wrappedKey.buffer.slice(wrappedKey.byteOffset, wrappedKey.byteOffset + wrappedKey.byteLength) as ArrayBuffer);
+      const aesKey = await window.crypto.subtle.importKey('raw', rawAes, 'AES-GCM', false, ['decrypt']);
+      const plain = await window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as ArrayBuffer }, aesKey, ct.buffer.slice(ct.byteOffset, ct.byteOffset + ct.byteLength) as ArrayBuffer);
+      return new TextDecoder().decode(plain);
+    }
+
+    try {
+      return await tryKey(envelope.key_s!);
+    } catch {
+      return await tryKey(envelope.key_r!);
+    }
+  } catch (err) {
+    return 'Unable to decrypt';
+  }
+}
+
+/**
  * Returns true if the body looks like an E2EE envelope.
  * Used to show the lock icon in the UI.
  */

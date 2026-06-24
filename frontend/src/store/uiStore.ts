@@ -9,6 +9,13 @@ interface UIState {
   setActivePanel: (panel: UIState['activePanel']) => void;
   showToast: (type: 'success' | 'error' | 'info', message: string, onClick?: () => void) => void;
   dismissToast: (id: string) => void;
+
+  confirmModal: { isOpen: boolean; title: string; message: string; onConfirm: () => void; onCancel: () => void } | null;
+  alertModal: { isOpen: boolean; title: string; message: string; onClose: () => void } | null;
+  showConfirm: (title: string, message: string) => Promise<boolean>;
+  showAlert: (title: string, message: string) => Promise<void>;
+  closeConfirm: () => void;
+  closeAlert: () => void;
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -27,4 +34,53 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
 
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter(t => t.id !== id) })),
+
+  confirmModal: null,
+  alertModal: null,
+
+  showConfirm: (title, message) => {
+    return new Promise((resolve) => {
+      set({
+        confirmModal: {
+          isOpen: true,
+          title,
+          message,
+          onConfirm: () => {
+            set({ confirmModal: null });
+            resolve(true);
+          },
+          onCancel: () => {
+            set({ confirmModal: null });
+            resolve(false);
+          }
+        }
+      });
+    });
+  },
+
+  showAlert: (title, message) => {
+    return new Promise((resolve) => {
+      set({
+        alertModal: {
+          isOpen: true,
+          title,
+          message,
+          onClose: () => {
+            set({ alertModal: null });
+            resolve();
+          }
+        }
+      });
+    });
+  },
+
+  closeConfirm: () => {
+    const s = get();
+    if (s.confirmModal) s.confirmModal.onCancel();
+  },
+
+  closeAlert: () => {
+    const s = get();
+    if (s.alertModal) s.alertModal.onClose();
+  }
 }));

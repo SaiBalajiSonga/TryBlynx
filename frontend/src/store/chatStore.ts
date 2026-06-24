@@ -1,6 +1,12 @@
 import { create } from 'zustand'
 import { useAuthStore } from './authStore';
 
+export interface MessageReaction {
+  emoji: string;
+  count: number;
+  me: boolean;
+}
+
 export interface ChatMessage {
   message_id: string;
   sender_id: string;
@@ -9,6 +15,8 @@ export interface ChatMessage {
   body: string;
   is_edited: boolean;
   created_at: string;
+  reply_to_id?: string;
+  reactions?: MessageReaction[];
 }
 
 export interface DMMessage {
@@ -17,7 +25,10 @@ export interface DMMessage {
   sender_id: string;
   sender_name: string;
   body: string;
+  is_edited?: boolean;
   created_at: string;
+  reply_to_id?: string;
+  reactions?: MessageReaction[];
 }
 
 export interface RecentMatch {
@@ -48,6 +59,9 @@ interface ChatState {
   addDMMessage: (conversationId: string, message: DMMessage) => void;
   updateMessage: (roomId: string, messageId: string, newBody: string, isEdited: boolean) => void;
   deleteMessage: (roomId: string, messageId: string) => void;
+  updateDMMessage: (conversationId: string, messageId: string, newBody: string, isEdited: boolean) => void;
+  deleteDMMessage: (conversationId: string, messageId: string) => void;
+  toggleReaction: (roomIdOrConvId: string, messageId: string, emoji: string, added: boolean, userId: string, isDM: boolean) => void;
   clearDMUnread: (conversationId: string) => void;
   addRecentMatch: (match: RecentMatch) => void;
   /** Clears only the matchmaking chat state; preserves DM history */
@@ -132,6 +146,63 @@ export const useChatStore = create<ChatState>((set) => ({
         [roomId]: existing.filter(m => m.message_id !== messageId)
       }
     };
+  }),
+
+  updateDMMessage: (conversationId, messageId, newBody, isEdited) => set((state) => {
+    const existing = state.dmMessages[conversationId];
+    if (!existing) return state;
+    return {
+      dmMessages: {
+        ...state.dmMessages,
+        [conversationId]: existing.map(m => m.message_id === messageId ? { ...m, body: newBody, is_edited: isEdited } : m)
+      }
+    };
+  }),
+
+  deleteDMMessage: (conversationId, messageId) => set((state) => {
+    const existing = state.dmMessages[conversationId];
+    if (!existing) return state;
+    return {
+      dmMessages: {
+        ...state.dmMessages,
+        [conversationId]: existing.filter(m => m.message_id !== messageId)
+      }
+    };
+  }),
+
+  toggleReaction: (roomIdOrConvId, messageId, emoji, added, userId, isDM) => set((state) => {
+    const targetMap = isDM ? state.dmMessages : state.messages;
+    const existing = targetMap[roomIdOrConvId];
+    if (!existing) return state;
+
+    const myId = useAuthStore.getState().user?.id;
+    const isMe = userId === myId;
+
+    const updated = existing.map(m => {
+      if (m.message_id !== messageId) return m;
+      let rx = [...(m.reactions || [])];
+      const rIdx = rx.findIndex(r => r.emoji === emoji);
+      
+      if (rIdx >= 0) {
+        if (added) {
+          rx[rIdx] = { ...rx[rIdx], count: rx[rIdx].count + 1, me: isMe ? true : rx[rIdx].me };
+        } else {
+          const newCount = rx[rIdx].count - 1;
+          if (newCount <= 0) {
+            rx.splice(rIdx, 1);
+          } else {
+            rx[rIdx] = { ...rx[rIdx], count: newCount, me: isMe ? false : rx[rIdx].me };
+          }
+        }
+      } else if (added) {
+        rx.push({ emoji, count: 1, me: isMe });
+      }
+
+      return { ...m, reactions: rx };
+    });
+
+    return isDM ? { dmMessages: { ...state.dmMessages, [roomIdOrConvId]: updated } } 
+                : { messages: { ...state.messages, [roomIdOrConvId]: updated } };
   }),
 
   clearDMUnread: (conversationId) => set((state) => ({

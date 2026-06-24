@@ -37,6 +37,8 @@ import (
 	"log"
 	"time"
 
+	"tryblynx/internal/models"
+
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -112,12 +114,20 @@ func handleMessage(c *Client, msg *InboundMessage) {
 		handleChatEdit(c, msg.Payload)
 	case "chat.delete":
 		handleChatDelete(c, msg.Payload)
+	case "chat.react":
+		handleChatReact(c, msg.Payload)
 	case "chat.leave":
 		handleChatLeave(c, msg.Payload)
 
 	// ── Direct Messages ──────────────────────────────────
 	case "dm.message":
 		handleDMMessage(c, msg.Payload)
+	case "dm.edit":
+		handleDMEdit(c, msg.Payload)
+	case "dm.delete":
+		handleDMDelete(c, msg.Payload)
+	case "dm.react":
+		handleDMReact(c, msg.Payload)
 	case "dm.typing":
 		handleDMTyping(c, msg.Payload)
 
@@ -149,8 +159,9 @@ type chatJoinPayload struct {
 }
 
 type chatMessagePayload struct {
-	RoomID string `json:"room_id"` // Conversation UUID
-	Body   string `json:"body"`    // 1-5000 characters
+	RoomID    string  `json:"room_id"` // Conversation UUID
+	Body      string  `json:"body"`    // 1-5000 characters
+	ReplyToID *string `json:"reply_to_id,omitempty"` // ID of the message being replied to
 }
 
 type chatEditPayload struct {
@@ -168,10 +179,37 @@ type chatLeavePayload struct {
 	RoomID string `json:"room_id"` // Conversation UUID
 }
 
+type chatReactPayload struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+	Emoji     string `json:"emoji"`
+}
+
 type dmMessagePayload struct {
-	RecipientID    string `json:"recipient_id"`     // Target user UUID
-	ConversationID string `json:"conversation_id"`  // Optional — skips GetOrCreateDM when provided
-	Body           string `json:"body"`             // 1-5000 characters
+	RecipientID    string  `json:"recipient_id"`    // Target user UUID
+	ConversationID string  `json:"conversation_id"` // Optional — skips GetOrCreateDM when provided
+	Body           string  `json:"body"`            // 1-5000 characters
+	ReplyToID      *string `json:"reply_to_id,omitempty"` // ID of the message being replied to
+}
+
+type dmEditPayload struct {
+	RecipientID    string `json:"recipient_id"`
+	ConversationID string `json:"conversation_id"`
+	MessageID      string `json:"message_id"`
+	Body           string `json:"body"`
+}
+
+type dmDeletePayload struct {
+	RecipientID    string `json:"recipient_id"`
+	ConversationID string `json:"conversation_id"`
+	MessageID      string `json:"message_id"`
+}
+
+type dmReactPayload struct {
+	RecipientID    string `json:"recipient_id"`
+	ConversationID string `json:"conversation_id"`
+	MessageID      string `json:"message_id"`
+	Emoji          string `json:"emoji"`
 }
 
 type matchFindPayload struct {
@@ -301,6 +339,14 @@ func handleChatMessage(c *Client, payload json.RawMessage) {
 	convID, _ := uuid.Parse(p.RoomID) // Already validated on join
 	var msg *models.Message
 	
+	// Parse ReplyToID if present
+	var replyToIDPtr *uuid.UUID
+	if p.ReplyToID != nil {
+		if parsed, err := uuid.Parse(*p.ReplyToID); err == nil {
+			replyToIDPtr = &parsed
+		}
+	}
+
 	if c.Shadowbanned {
 		// Stealth drop: fake the message ID and skip DB/broadcast
 		msg = &models.Message{
@@ -310,7 +356,7 @@ func handleChatMessage(c *Client, payload json.RawMessage) {
 		}
 	} else {
 		var err error
-		msg, err = c.Hub.Store.CreateMessage(context.Background(), convID, c.UserID, p.Body)
+		msg, err = c.Hub.Store.CreateMessage(context.Background(), convID, c.UserID, p.Body, replyToIDPtr)
 		if err != nil {
 			log.Printf("ws-handler: failed to persist chat message for user %s: %v", c.UserID, err)
 			c.sendError("failed to send message")
@@ -328,6 +374,7 @@ func handleChatMessage(c *Client, payload json.RawMessage) {
 			"room_id":     p.RoomID,
 			"body":        msg.Body,
 			"created_at":  msg.CreatedAt.Format(time.RFC3339Nano),
+			"reply_to_id": p.ReplyToID,
 		},
 	}
 	outData, _ := json.Marshal(outbound)
@@ -553,6 +600,14 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 		}
 	}
 
+	// Parse ReplyToID if present
+	var replyToIDPtr *uuid.UUID
+	if p.ReplyToID != nil {
+		if parsed, err := uuid.Parse(*p.ReplyToID); err == nil {
+			replyToIDPtr = &parsed
+		}
+	}
+
 	// Persist message to PostgreSQL
 	var msg *models.Message
 	if c.Shadowbanned {
@@ -564,7 +619,7 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 		}
 	} else {
 		var err error
-		msg, err = c.Hub.Store.CreateMessage(ctx, convID, c.UserID, p.Body)
+		msg, err = c.Hub.Store.CreateMessage(ctx, convID, c.UserID, p.Body, replyToIDPtr)
 		if err != nil {
 			log.Printf("ws-handler: failed to persist DM for user %s: %v", c.UserID, err)
 			c.sendError("failed to send message")
@@ -582,6 +637,7 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 			"sender_name":     c.Username,
 			"body":            msg.Body,
 			"created_at":      msg.CreatedAt.Format(time.RFC3339Nano),
+			"reply_to_id":     p.ReplyToID,
 		},
 	}
 	outData, _ := json.Marshal(outbound)
@@ -600,6 +656,177 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 	// Deliver to recipient (if online — otherwise they'll see
 	// it in their DM history via the REST API)
 	c.Hub.direct <- &DirectMessage{TargetUserID: recipientID, Data: outData}
+}
+
+// handleDMEdit processes "dm.edit" messages.
+func handleDMEdit(c *Client, payload json.RawMessage) {
+	var p dmEditPayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.RecipientID == "" || p.MessageID == "" || p.Body == "" {
+		c.sendError("invalid dm.edit payload")
+		return
+	}
+	if len(p.Body) > 5000 {
+		c.sendError("message too long (max 5000 characters)")
+		return
+	}
+
+	msgID, err := uuid.Parse(p.MessageID)
+	if err != nil {
+		c.sendError("invalid message_id")
+		return
+	}
+
+	err = c.Hub.Store.UpdateMessage(context.Background(), msgID, c.UserID, p.Body)
+	if err != nil {
+		log.Printf("ws-handler: failed to edit DM for user %s: %v", c.UserID, err)
+		c.sendError("failed to edit message")
+		return
+	}
+
+	outbound := OutboundMessage{
+		Type: "dm.edit",
+		Payload: map[string]interface{}{
+			"message_id":      p.MessageID,
+			"conversation_id": p.ConversationID,
+			"body":            p.Body,
+			"is_edited":       true,
+		},
+	}
+	outData, _ := json.Marshal(outbound)
+
+	// Send confirmation
+	select {
+	case c.Send <- outData:
+	default:
+	}
+
+	// Deliver to peer
+	peerID, _ := uuid.Parse(p.RecipientID)
+	c.Hub.direct <- &DirectMessage{TargetUserID: peerID, Data: outData}
+}
+
+// handleDMDelete processes "dm.delete" messages.
+func handleDMDelete(c *Client, payload json.RawMessage) {
+	var p dmDeletePayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.RecipientID == "" || p.MessageID == "" {
+		c.sendError("invalid dm.delete payload")
+		return
+	}
+
+	msgID, err := uuid.Parse(p.MessageID)
+	if err != nil {
+		c.sendError("invalid message_id")
+		return
+	}
+
+	err = c.Hub.Store.DeleteMessage(context.Background(), msgID, c.UserID)
+	if err != nil {
+		log.Printf("ws-handler: failed to delete DM for user %s: %v", c.UserID, err)
+		c.sendError("failed to delete message")
+		return
+	}
+
+	outbound := OutboundMessage{
+		Type: "dm.delete",
+		Payload: map[string]interface{}{
+			"message_id":      p.MessageID,
+			"conversation_id": p.ConversationID,
+		},
+	}
+	outData, _ := json.Marshal(outbound)
+
+	// Send confirmation
+	select {
+	case c.Send <- outData:
+	default:
+	}
+
+	// Deliver to peer
+	peerID, _ := uuid.Parse(p.RecipientID)
+	c.Hub.direct <- &DirectMessage{TargetUserID: peerID, Data: outData}
+}
+
+// handleDMReact processes "dm.react" messages.
+func handleDMReact(c *Client, payload json.RawMessage) {
+	var p dmReactPayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.RecipientID == "" || p.MessageID == "" || p.Emoji == "" {
+		c.sendError("invalid dm.react payload")
+		return
+	}
+
+	msgID, err := uuid.Parse(p.MessageID)
+	if err != nil {
+		c.sendError("invalid message_id")
+		return
+	}
+
+	added, err := c.Hub.Store.ToggleMessageReaction(context.Background(), msgID, c.UserID, p.Emoji)
+	if err != nil {
+		log.Printf("ws-handler: failed to toggle DM reaction for user %s: %v", c.UserID, err)
+		c.sendError("failed to toggle reaction")
+		return
+	}
+
+	outbound := OutboundMessage{
+		Type: "dm.react",
+		Payload: map[string]interface{}{
+			"message_id":      p.MessageID,
+			"conversation_id": p.ConversationID,
+			"emoji":           p.Emoji,
+			"added":           added,
+			"user_id":         c.UserID.String(),
+		},
+	}
+	outData, _ := json.Marshal(outbound)
+
+	select {
+	case c.Send <- outData:
+	default:
+	}
+
+	peerID, _ := uuid.Parse(p.RecipientID)
+	c.Hub.direct <- &DirectMessage{TargetUserID: peerID, Data: outData}
+}
+
+// handleChatReact processes "chat.react" messages.
+func handleChatReact(c *Client, payload json.RawMessage) {
+	var p chatReactPayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.RoomID == "" || p.MessageID == "" || p.Emoji == "" {
+		c.sendError("invalid chat.react payload")
+		return
+	}
+
+	roomKey := "chat:room:" + p.RoomID
+	if !c.joinedRooms[roomKey] {
+		c.sendError("you must join the room before reacting")
+		return
+	}
+
+	msgID, err := uuid.Parse(p.MessageID)
+	if err != nil {
+		c.sendError("invalid message_id")
+		return
+	}
+
+	added, err := c.Hub.Store.ToggleMessageReaction(context.Background(), msgID, c.UserID, p.Emoji)
+	if err != nil {
+		log.Printf("ws-handler: failed to toggle chat reaction for user %s: %v", c.UserID, err)
+		c.sendError("failed to toggle reaction")
+		return
+	}
+
+	outbound := OutboundMessage{
+		Type: "chat.react",
+		Payload: map[string]interface{}{
+			"message_id": p.MessageID,
+			"room_id":    p.RoomID,
+			"emoji":      p.Emoji,
+			"added":      added,
+			"user_id":    c.UserID.String(),
+		},
+	}
+	outData, _ := json.Marshal(outbound)
+	c.Hub.broadcast <- &RoomBroadcast{RoomID: roomKey, Data: outData}
 }
 
 // handleDMTyping processes "dm.typing" messages.

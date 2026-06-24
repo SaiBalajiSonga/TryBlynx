@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, UserPlus, MessageSquare, Loader, UserX, UserCheck, Search as SearchIcon } from 'lucide-react';
 import { api } from '../lib/api';
+import { useUIStore } from '../store/uiStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
@@ -79,17 +80,17 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
       onClose();
       navigate(`/app/dms/${res.conversation_id}`);
     } catch (err: any) {
-      alert(err.message || 'Could not start DM.');
+      useUIStore.getState().showAlert('Error', err.message || 'Could not start DM.');
     }
   };
 
   const handleRemove = async (userId: string) => {
-    if (!window.confirm('Remove this friend?')) return;
+    if (!await useUIStore.getState().showConfirm('Remove Friend', 'Remove this friend?')) return;
     try {
       await api.removeFriend(userId);
-      setFriends(prev => prev.filter(f => f.peer_id !== userId && f.id !== userId));
+      setFriends(prev => prev.filter(f => (f.peer_id || f.id) !== userId));
     } catch (err: any) {
-      alert(err.message || 'Failed to remove friend');
+      useUIStore.getState().showAlert('Error', err.message || 'Failed to remove friend');
     }
   };
 
@@ -113,7 +114,6 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
     } catch {}
   };
 
-  // Cancel an *outgoing* friend request (caller is the requester, not the addressee)
   const handleCancel = async (peerId: string) => {
     try {
       await api.cancelFriendRequest(peerId);
@@ -122,7 +122,7 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
         useNotificationStore.getState().fetchPendingFriendsCount();
       });
     } catch (err: any) {
-      alert(err.message || 'Failed to cancel request');
+      useUIStore.getState().showAlert('Error', err.message || 'Failed to cancel request');
     }
   };
 
@@ -131,7 +131,7 @@ export function FriendsModal({ onClose }: FriendsModalProps) {
       await api.sendFriendRequest(userId);
       await useNotificationStore.getState().fetchPendingFriendsCount(); // Refresh the global requests list
     } catch (err: any) {
-      alert(err.message || 'Failed to send request');
+      useUIStore.getState().showAlert('Error', err.message || 'Failed to send request');
     }
   };
 

@@ -50,8 +50,8 @@ export const api = {
     fetchWithAuth('/moderation/block', { method: 'POST', body: JSON.stringify({ blocked_id: userId }) }),
   unblockUser: (userId: string) =>
     fetchWithAuth('/moderation/unblock', { method: 'POST', body: JSON.stringify({ blocked_id: userId }) }),
-  reportUser: (userId: string, reason: string, messageId?: string) =>
-    fetchWithAuth('/moderation/report', { method: 'POST', body: JSON.stringify({ reported_id: userId, reason, message_id: messageId }) }),
+  reportUser: (userId: string, reason: string, messageId?: string, proofUrl?: string) =>
+    fetchWithAuth('/moderation/report', { method: 'POST', body: JSON.stringify({ reported_id: userId, reason, message_id: messageId, proof_url: proofUrl }) }),
   reportStrike: () =>
     fetchWithAuth('/moderation/strike', { method: 'POST' }),
 

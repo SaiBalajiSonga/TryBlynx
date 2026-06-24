@@ -449,7 +449,7 @@ func (s *Store) GetFeedPosts(ctx context.Context, cursor time.Time, limit int) (
 // Returns:
 //   - *models.Message: The persisted message with generated ID and timestamp.
 //   - error:           Non-nil on FK violation or connection error.
-func (s *Store) CreateMessage(ctx context.Context, conversationID, senderID uuid.UUID, body string) (*models.Message, error) {
+func (s *Store) CreateMessage(ctx context.Context, conversationID, senderID uuid.UUID, body string, replyToID *uuid.UUID) (*models.Message, error) {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("db: failed to begin tx: %w", err)
@@ -458,11 +458,11 @@ func (s *Store) CreateMessage(ctx context.Context, conversationID, senderID uuid
 
 	var m models.Message
 	err = tx.QueryRow(ctx, `
-		INSERT INTO messages (conversation_id, sender_id, body)
-		VALUES ($1, $2, $3)
-		RETURNING id, conversation_id, sender_id, body, created_at`,
-		conversationID, senderID, body,
-	).Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &m.CreatedAt)
+		INSERT INTO messages (conversation_id, sender_id, body, reply_to_id)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, conversation_id, sender_id, body, is_edited, created_at, reply_to_id`,
+		conversationID, senderID, body, replyToID,
+	).Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &m.IsEdited, &m.CreatedAt, &m.ReplyToID)
 	if err != nil {
 		return nil, fmt.Errorf("db: failed to create message: %w", err)
 	}
@@ -502,10 +502,21 @@ func (s *Store) GetMessages(ctx context.Context, requestingUserID uuid.UUID, con
 	}
 
 	rows, err := s.Pool.Query(ctx, `
-		SELECT m.id, m.conversation_id, m.sender_id, m.body, m.is_edited, m.created_at,
-		       COALESCE(NULLIF(u.display_name, ''), NULLIF(u.username, ''), 'User') AS sender_name
+		SELECT m.id, m.conversation_id, m.sender_id, m.body, m.is_edited, m.created_at, m.reply_to_id,
+		       COALESCE(NULLIF(u.display_name, ''), NULLIF(u.username, ''), 'User') AS sender_name,
+		       COALESCE(r.body, '') AS reply_to_body,
+		       COALESCE(
+		           (SELECT json_agg(json_build_object('emoji', rx.emoji, 'count', rx.count, 'me', rx.me))
+		            FROM (
+		                SELECT emoji, count(*) as count, bool_or(user_id = $4) as me
+		                FROM message_reactions
+		                WHERE message_id = m.id
+		                GROUP BY emoji
+		            ) rx
+		           ), '[]'::json) AS reactions
 		FROM messages m
 		LEFT JOIN users u ON m.sender_id = u.id
+		LEFT JOIN messages r ON m.reply_to_id = r.id
 		WHERE m.conversation_id = $1 AND m.created_at < $2
 		  AND m.sender_id NOT IN (
 		      SELECT blocked_id FROM user_blocks WHERE blocker_id = $4
@@ -525,11 +536,15 @@ func (s *Store) GetMessages(ctx context.Context, requestingUserID uuid.UUID, con
 	for rows.Next() {
 		var m models.Message
 		var senderName *string
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &m.IsEdited, &m.CreatedAt, &senderName); err != nil {
+		var reactionsJSON []byte
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &m.IsEdited, &m.CreatedAt, &m.ReplyToID, &senderName, &m.ReplyToBody, &reactionsJSON); err != nil {
 			return nil, fmt.Errorf("db: failed to scan message: %w", err)
 		}
 		if senderName != nil {
 			m.SenderName = *senderName
+		}
+		if len(reactionsJSON) > 0 {
+			json.Unmarshal(reactionsJSON, &m.Reactions)
 		}
 		msgs = append(msgs, m)
 	}
@@ -604,6 +619,76 @@ func (s *Store) DeleteMessage(ctx context.Context, id uuid.UUID, senderID uuid.U
 		return fmt.Errorf("db: message not found or unauthorized")
 	}
 	return nil
+}
+
+// ToggleMessageReaction adds or removes a reaction from a message.
+// Returns a boolean indicating if the reaction was added (true) or removed (false).
+func (s *Store) ToggleMessageReaction(ctx context.Context, messageID, userID uuid.UUID, emoji string) (bool, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("db: failed to begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Check if the reaction already exists
+	var exists bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3)
+	`, messageID, userID, emoji).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("db: failed to check reaction: %w", err)
+	}
+
+	if exists {
+		// Remove it
+		_, err = tx.Exec(ctx, `
+			DELETE FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3
+		`, messageID, userID, emoji)
+		if err != nil {
+			return false, fmt.Errorf("db: failed to delete reaction: %w", err)
+		}
+	} else {
+		// Add it
+		_, err = tx.Exec(ctx, `
+			INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
+		`, messageID, userID, emoji)
+		if err != nil {
+			return false, fmt.Errorf("db: failed to insert reaction: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("db: failed to commit tx: %w", err)
+	}
+
+	return !exists, nil
+}
+
+// GetMessageReactions fetches reactions for a specific message, grouped by emoji.
+func (s *Store) GetMessageReactions(ctx context.Context, requestingUserID, messageID uuid.UUID) ([]models.MessageReaction, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT emoji, count(*) as count, bool_or(user_id = $1) as me
+		FROM message_reactions
+		WHERE message_id = $2
+		GROUP BY emoji
+	`, requestingUserID, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("db: failed to query message reactions: %w", err)
+	}
+	defer rows.Close()
+
+	var reactions []models.MessageReaction
+	for rows.Next() {
+		var rx models.MessageReaction
+		if err := rows.Scan(&rx.Emoji, &rx.Count, &rx.Me); err != nil {
+			return nil, fmt.Errorf("db: failed to scan reaction: %w", err)
+		}
+		reactions = append(reactions, rx)
+	}
+	if reactions == nil {
+		reactions = []models.MessageReaction{}
+	}
+	return reactions, rows.Err()
 }
 
 // ClearConversationMessages deletes all messages in a specific conversation.
@@ -713,7 +798,11 @@ func (s *Store) GetUserConversations(ctx context.Context, userID uuid.UUID) ([]m
 			(SELECT created_at FROM messages
 			 WHERE conversation_id = c.id
 			 ORDER BY created_at DESC LIMIT 1
-			) AS last_message_at
+			) AS last_message_at,
+			(SELECT sender_id FROM messages
+			 WHERE conversation_id = c.id
+			 ORDER BY created_at DESC LIMIT 1
+			) AS last_message_sender_id
 		FROM conversations c
 		JOIN conversation_members cm ON cm.conversation_id = c.id
 		WHERE cm.user_id = $1
@@ -735,7 +824,7 @@ func (s *Store) GetUserConversations(ctx context.Context, userID uuid.UUID) ([]m
 		var cs models.ConversationSummary
 		if err := rows.Scan(
 			&cs.ID, &cs.Type, &cs.Name, &cs.CreatedAt,
-			&cs.LastMessage, &cs.LastMessageAt,
+			&cs.LastMessage, &cs.LastMessageAt, &cs.LastMessageSenderID,
 		); err != nil {
 			return nil, fmt.Errorf("db: failed to scan conversation: %w", err)
 		}
@@ -804,6 +893,7 @@ func (s *Store) GetUserDMs(ctx context.Context, userID uuid.UUID) ([]DMConversat
 			c.id, c.type, c.created_at,
 			COALESCE((SELECT body FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1), '') AS last_message,
 			(SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
+			(SELECT sender_id FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_sender_id,
 			u.id AS peer_id,
 			COALESCE(NULLIF(u.display_name, ''), u.username) AS peer_name,
 			COALESCE(u.avatar_url, '') AS peer_avatar,
@@ -829,7 +919,7 @@ func (s *Store) GetUserDMs(ctx context.Context, userID uuid.UUID) ([]DMConversat
 		var dm DMConversation
 		if err := rows.Scan(
 			&dm.ID, &dm.Type, &dm.CreatedAt,
-			&dm.LastMessage, &dm.LastMessageAt,
+			&dm.LastMessage, &dm.LastMessageAt, &dm.LastMessageSenderID,
 			&dm.PeerID, &dm.PeerName, &dm.PeerAvatar, &dm.PeerPublicKey,
 			&dm.LastActiveAt,
 		); err != nil {

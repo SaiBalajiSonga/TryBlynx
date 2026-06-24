@@ -160,7 +160,7 @@ func (s *Server) SendDMHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		var err error
-		msg, err = s.Store.CreateMessage(r.Context(), convID, userID, req.Body)
+		msg, err = s.Store.CreateMessage(r.Context(), convID, userID, req.Body, nil)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to send message")
 			return

@@ -246,16 +246,18 @@ export function VideoRoom({ peerId, isInitiator }: { peerId: string; isInitiator
             <div ref={messagesEndRef} />
           </div>
 
-          <form onSubmit={handleSendChat} style={{ padding: '10px 12px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: '8px' }}>
-            <input
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              placeholder="Send a message…"
-              style={{ flex: 1, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '8px 12px', color: 'white', fontSize: '13px', outline: 'none', fontFamily: 'inherit' }}
-            />
-            <button type="submit" disabled={!chatInput.trim()} style={{ width: '34px', height: '34px', borderRadius: '8px', border: 'none', cursor: chatInput.trim() ? 'pointer' : 'not-allowed', background: chatInput.trim() ? 'var(--accent)' : 'rgba(255,255,255,0.05)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <Send size={14} />
-            </button>
+          <form onSubmit={handleSendChat} style={{ padding: '10px 12px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="chat-input-wrapper" style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)', padding: '4px 4px 4px 12px' }}>
+              <input
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                placeholder="Send a message…"
+                style={{ flex: 1, background: 'transparent', border: 'none', color: 'white', fontSize: '13px', outline: 'none', fontFamily: 'inherit', padding: 0 }}
+              />
+              <button type="submit" disabled={!chatInput.trim()} style={{ width: '28px', height: '28px', borderRadius: '50%', border: 'none', cursor: chatInput.trim() ? 'pointer' : 'not-allowed', background: chatInput.trim() ? 'var(--accent)' : 'transparent', color: chatInput.trim() ? 'white' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.15s' }}>
+                <Send size={13} />
+              </button>
+            </div>
           </form>
         </div>
       )}

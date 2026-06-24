@@ -2,8 +2,8 @@
 @import "tailwindcss";
 
 :root {
-  --blynx-900: #0d0e12;
-  --blynx-850: #111318;
+  --blynx-900: #111318;
+  --blynx-850: #0d0e12;
   --blynx-800: #151720;
   --blynx-750: #1a1d28;
   --blynx-700: #1e2130;
@@ -37,10 +37,10 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--blynx-500); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--blynx-400); }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
 
 @keyframes pulse-ring {
   0% { transform: scale(1); opacity: 0.4; }
@@ -81,7 +81,7 @@ html, body {
   background: var(--accent);
   color: white;
   font-weight: 600;
-  border-radius: 8px;
+  border-radius: 14px;
   padding: 10px 20px;
   border: none;
   cursor: pointer;
@@ -105,8 +105,8 @@ html, body {
 .input-field {
   background: var(--blynx-750);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
+  border-radius: 14px;
+  padding: 10px 16px;
   color: var(--text-primary);
   width: 100%;
   font-family: inherit;
@@ -120,6 +120,32 @@ html, body {
 }
 .input-field::placeholder { color: var(--text-muted); }
 
+.chat-input-wrapper {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 8px 8px 8px 16px;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.chat-input-wrapper:focus-within {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.chat-input-wrapper input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  font-family: inherit;
+  padding: 8px 0;
+}
+.chat-input-wrapper input::placeholder { color: var(--text-muted); }
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -129,3 +155,35 @@ html, body {
 .status-dot.connected { background: var(--teal); }
 .status-dot.connecting { background: var(--yellow); animation: blink 1s ease infinite; }
 .status-dot.disconnected { background: var(--red); }
+
+/* Global Modals CSS */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fade-in 0.15s ease-out forwards;
+}
+
+.modal-content {
+  background: var(--blynx-800);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 420px;
+  padding: 24px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  animation: slide-in-up 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slide-in-up {
+  from { opacity: 0; transform: translateY(20px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}

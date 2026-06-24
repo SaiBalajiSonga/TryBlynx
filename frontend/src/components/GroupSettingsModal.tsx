@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api } from '../lib/api';
 import { X, Save, Trash2, Settings, ShieldAlert, Clock } from 'lucide-react';
+import { useUIStore } from '../store/uiStore';
 
 interface GroupData {
   id?: string;
@@ -54,7 +55,7 @@ export function GroupSettingsModal({ mode, initialData, onClose, onSave, onDelet
 
   const handleDelete = async () => {
     if (!formData.id || !onDelete) return;
-    if (!window.confirm(`Are you absolutely sure you want to delete #${formData.name}? This cannot be undone.`)) return;
+    if (!await useUIStore.getState().showConfirm('Delete Group', `Are you absolutely sure you want to delete #${formData.name}? This cannot be undone.`)) return;
 
     setLoading(true);
     try {

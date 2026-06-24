@@ -27,6 +27,7 @@ export function useWebSocket() {
   const {
     setWsStatus, setMatchStatus, setActiveRoomId, setMatchPeerId,
     addMessage, addDMMessage, updateMessage, deleteMessage,
+    updateDMMessage, deleteDMMessage, toggleReaction,
   } = useChatStore();
   const addNotification = useNotificationStore((s) => s.addNotification);
   const handleMessageRef = useRef<((data: any) => void) | null>(null);
@@ -86,6 +87,21 @@ export function useWebSocket() {
         }
         break;
       }
+      case 'dm.edit':
+        updateDMMessage(data.payload.conversation_id, data.payload.message_id, data.payload.body, data.payload.is_edited);
+        window.dispatchEvent(new CustomEvent('blynx:dm-edit', { detail: data.payload }));
+        break;
+      case 'dm.delete':
+        deleteDMMessage(data.payload.conversation_id, data.payload.message_id);
+        window.dispatchEvent(new CustomEvent('blynx:dm-delete', { detail: data.payload }));
+        break;
+      case 'dm.react':
+        toggleReaction(data.payload.conversation_id, data.payload.message_id, data.payload.emoji, data.payload.added, data.payload.user_id, true);
+        window.dispatchEvent(new CustomEvent('blynx:dm-react', { detail: data.payload }));
+        break;
+      case 'chat.react':
+        toggleReaction(data.payload.room_id, data.payload.message_id, data.payload.emoji, data.payload.added, data.payload.user_id, false);
+        break;
       case 'dm.typing': {
         // Broadcast to the DMs component via a custom event
         window.dispatchEvent(new CustomEvent('blynx:dm-typing', {
@@ -179,7 +195,7 @@ export function useWebSocket() {
       default:
         console.log('Unhandled WS message:', data.type, data);
     }
-  }, [addMessage, addDMMessage, updateMessage, deleteMessage,
+  }, [addMessage, addDMMessage, updateMessage, deleteMessage, updateDMMessage, deleteDMMessage, toggleReaction,
       setMatchStatus, setActiveRoomId, setMatchPeerId, addNotification]);
 
   // Always keep the ref pointing to the latest handleMessage

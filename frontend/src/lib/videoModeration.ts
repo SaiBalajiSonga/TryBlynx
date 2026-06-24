@@ -2,6 +2,7 @@ import * as nsfwjs from 'nsfwjs';
 import * as tf from '@tensorflow/tfjs';
 import { api } from './api';
 import { useAuthStore } from '../store/authStore';
+import { useUIStore } from '../store/uiStore';
 
 // Model configuration
 // We use the default public model hosted by nsfwjs.
@@ -15,7 +16,19 @@ export const initModerationModel = async () => {
     try {
         // Ensure TF backend is ready (WebGL is fastest for browsers)
         await tf.ready();
+        
+        // Suppress NSFWJS default model warning
+        const originalWarn = console.warn;
+        console.warn = (...args) => {
+            if (typeof args[0] === 'string' && args[0].includes('NSFWJS docs')) return;
+            originalWarn(...args);
+        };
+        
         model = await nsfwjs.load();
+        
+        // Restore warning
+        console.warn = originalWarn;
+        
         console.log('NSFW.js model loaded successfully.');
     } catch (error) {
         console.error('Failed to load NSFW.js model:', error);
@@ -77,7 +90,7 @@ export const reportAIStrike = async () => {
         const response = await api.reportStrike();
         // If the backend banned us, log the user out
         if (response && response.banned_until) {
-            alert(`You have been temporarily banned for inappropriate behavior until ${new Date(response.banned_until).toLocaleString()}`);
+            useUIStore.getState().showAlert('Banned', `You have been temporarily banned for inappropriate behavior until ${new Date(response.banned_until).toLocaleString()}`);
             useAuthStore.getState().clearAuth();
             window.location.href = '/auth';
         }

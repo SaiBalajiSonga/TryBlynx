@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, MoreVertical, Phone, Video, Loader, MessageSquare, Lock, ShieldCheck } from 'lucide-react';
+import { Send, MoreVertical, Phone, Video, Loader, MessageSquare, Lock, Smile, Image as ImageIcon, StickyNote, Reply, Edit2, Copy, Trash2, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
+import { useUIStore } from '../store/uiStore';
 import {
   generateKeyPair, exportPublicKey, exportPrivateKeyToJwk,
-  encryptMessage, decryptMessage, isEncrypted,
+  encryptMessage, decryptMessage, decryptMessageUnknownSender, isEncrypted,
   storePrivateKey, loadPrivateKey,
 } from '../lib/crypto';
 import { getSendMessage } from '../lib/useWebSocket';
@@ -38,6 +39,8 @@ export function DMs() {
   const [newMessage, setNewMessage] = useState('');
   const [e2eeReady, setE2eeReady] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+  const [attachmentTab, setAttachmentTab] = useState<'emoji' | 'gif' | 'sticker'>('emoji');
   const [peerIsTyping, setPeerIsTyping] = useState(false);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingSentRef = useRef(false);
@@ -46,15 +49,21 @@ export function DMs() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const [editingMessage, setEditingMessage] = useState<any>(null);
+  const [replyingToMessage, setReplyingToMessage] = useState<any>(null);
+  const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+
   const handleClearChat = async () => {
     if (!id) return;
-    if (window.confirm('Are you sure you want to clear the entire chat history? This cannot be undone and will delete the chat for both users.')) {
+    const confirmed = await useUIStore.getState().showConfirm('Clear Chat', 'Are you sure you want to clear the entire chat history? This cannot be undone and will delete the chat for both users.');
+    if (confirmed) {
       try {
         await api.clearDMMessages(id);
         setMessages([]);
         setShowMenu(false);
       } catch (err: any) {
-        alert(err.message || 'Failed to clear chat');
+        useUIStore.getState().showAlert('Error', err.message || 'Failed to clear chat');
       }
     }
   };
@@ -99,23 +108,25 @@ export function DMs() {
   // ── Step 2: Load DM list ──────────────────────────────────────────────────
   useEffect(() => {
     api.getDMs()
-      .then(res => {
+      .then(async res => {
         const chats = res.conversations || [];
-        setDms(chats);
-        // Seed the presence store with peer IDs from the DM list.
-        // is_online is no longer included in the REST response — presence
-        // is kept live by WS 'presence.update' pushes instead.
-        usePresenceStore.getState().initializePresence(chats.map((c: any) => ({
-          id: c.peer_id,
-          is_online: false,
-          last_active_at: c.last_active_at
-        })));
-        if (!id && chats.length > 0) navigate(`/app/dms/${chats[0].id}`, { replace: true });
+        const privJwk = user ? loadPrivateKey(user.id) : null;
+        
+        // Decrypt previews
+        const decryptedChats = await Promise.all(chats.map(async (c: any) => {
+          if (c.last_message && isEncrypted(c.last_message) && privJwk) {
+            c.last_message = await decryptMessageUnknownSender(c.last_message, privJwk);
+          }
+          return c;
+        }));
+
+        setDms(decryptedChats);
+        if (!id && decryptedChats.length > 0) navigate(`/app/dms/${decryptedChats[0].id}`, { replace: true });
       })
       .catch(err => console.error('[DMs] Failed to load list:', err))
       .finally(() => setLoadingDms(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user?.id]);
 
   // ── Step 3: Load + decrypt message history when conversation changes ──────
   useEffect(() => {
@@ -165,9 +176,17 @@ export function DMs() {
       const chat = dms.find(c => c.id === id);
       if (chat && !chat.peer_public_key && !keyRefetchInFlightRef.current) {
         keyRefetchInFlightRef.current = true;
-        api.getDMs().then(res => {
-          setDms(res.conversations || []);
-          usePresenceStore.getState().initializePresence((res.conversations || []).map((c: any) => ({
+        api.getDMs().then(async res => {
+          const chats = res.conversations || [];
+          const privJwk = user ? loadPrivateKey(user.id) : null;
+          const decryptedChats = await Promise.all(chats.map(async (c: any) => {
+            if (c.last_message && isEncrypted(c.last_message) && privJwk) {
+              c.last_message = await decryptMessageUnknownSender(c.last_message, privJwk);
+            }
+            return c;
+          }));
+          setDms(decryptedChats);
+          usePresenceStore.getState().initializePresence(decryptedChats.map((c: any) => ({
             id: c.peer_id,
             is_online: false,
             last_active_at: c.last_active_at
@@ -196,7 +215,7 @@ export function DMs() {
         // Bug #1 fix: Update sidebar preview in real-time when a new message arrives
         setDms(prev => prev.map(c =>
           c.id === latest.conversation_id
-            ? { ...c, last_message: body.startsWith('{') ? '🔒 Encrypted message' : body, last_message_at: latest.created_at }
+            ? { ...c, last_message: body.startsWith('{') ? 'Encrypted message' : body, last_message_at: latest.created_at, last_message_sender_id: latest.sender_id }
             : c
         ));
       })();
@@ -232,6 +251,58 @@ export function DMs() {
     return () => window.removeEventListener('blynx:dm-typing', handlePeerTyping);
   }, [id]);
 
+  // Listen for real-time edits, deletes, and reactions to existing messages
+  useEffect(() => {
+    const handleEdit = (e: Event) => {
+      const { conversation_id, message_id, body, is_edited } = (e as CustomEvent).detail;
+      if (conversation_id !== id) return;
+      setMessages(prev => prev.map(m => m.message_id === message_id ? { ...m, body, is_edited } : m));
+    };
+    const handleDelete = (e: Event) => {
+      const { conversation_id, message_id } = (e as CustomEvent).detail;
+      if (conversation_id !== id) return;
+      setMessages(prev => prev.filter(m => m.message_id !== message_id));
+    };
+    const handleReact = (e: Event) => {
+      const { conversation_id, message_id, emoji, added, user_id } = (e as CustomEvent).detail;
+      if (conversation_id !== id) return;
+      
+      const myId = user?.id;
+      const isMe = user_id === myId;
+      
+      setMessages(prev => prev.map(m => {
+        if (m.message_id !== message_id) return m;
+        let rx = [...(m.reactions || [])];
+        const rIdx = rx.findIndex(r => r.emoji === emoji);
+        
+        if (rIdx >= 0) {
+          if (added) {
+            rx[rIdx] = { ...rx[rIdx], count: rx[rIdx].count + 1, me: isMe ? true : rx[rIdx].me };
+          } else {
+            const newCount = rx[rIdx].count - 1;
+            if (newCount <= 0) {
+              rx.splice(rIdx, 1);
+            } else {
+              rx[rIdx] = { ...rx[rIdx], count: newCount, me: isMe ? false : rx[rIdx].me };
+            }
+          }
+        } else if (added) {
+          rx.push({ emoji, count: 1, me: isMe });
+        }
+        return { ...m, reactions: rx };
+      }));
+    };
+
+    window.addEventListener('blynx:dm-edit', handleEdit);
+    window.addEventListener('blynx:dm-delete', handleDelete);
+    window.addEventListener('blynx:dm-react', handleReact);
+    return () => {
+      window.removeEventListener('blynx:dm-edit', handleEdit);
+      window.removeEventListener('blynx:dm-delete', handleDelete);
+      window.removeEventListener('blynx:dm-react', handleReact);
+    };
+  }, [id, user?.id]);
+
   // ── Step 5: Send message (encrypt if both keys available) ─────────────────
   const activeChat = dms.find(c => c.id === id);
 
@@ -247,36 +318,68 @@ export function DMs() {
     return () => window.removeEventListener('blynx:friend-removed', onFriendRemoved);
   }, [activeChat, navigate]);
 
-  const handleSend = useCallback(async (e?: React.FormEvent | React.MouseEvent) => {
-    if (e) e.preventDefault();
-    if (!newMessage.trim() || !id || !user || !activeChat) return;
+  const handleDeleteMessage = useCallback(async (messageId: string) => {
+    const confirmed = await useUIStore.getState().showConfirm('Delete Message', 'Are you sure you want to delete this message?');
+    if (!confirmed) return;
+    const sendMessage = getSendMessage();
+    if (sendMessage) {
+      sendMessage('dm.delete', { recipient_id: activeChat?.peer_id, conversation_id: id, message_id: messageId });
+    }
+  }, [id, activeChat]);
 
-    const text = newMessage.trim();
-    setNewMessage('');
+  const handleReactMessage = useCallback((messageId: string, emoji: string) => {
+    const sendMessage = getSendMessage();
+    if (sendMessage) {
+      sendMessage('dm.react', { recipient_id: activeChat?.peer_id, conversation_id: id, message_id: messageId, emoji });
+    }
+    setReactionPickerMsgId(null);
+  }, [id, activeChat]);
+
+  const handleSend = useCallback(async (e?: React.FormEvent | React.MouseEvent, overrideText?: string) => {
+    if (e) e.preventDefault();
+    const textToSend = overrideText || newMessage.trim();
+    if (!textToSend || !id || !user || !activeChat) return;
+
+    if (!overrideText) setNewMessage('');
     // Stop typing indicator on send
     typingSentRef.current = false;
     const sendMessage = getSendMessage();
 
     // Try to encrypt; fall back to plaintext if either party has no pubkey
-    let body = text;
+    let body = textToSend;
     const myPub = user.public_key;
     const peerPub = activeChat.peer_public_key;
 
     if (myPub && peerPub) {
       try {
-        body = await encryptMessage(text, myPub, peerPub);
+        body = await encryptMessage(textToSend, myPub, peerPub);
       } catch (err) {
         console.error('[E2EE] Encrypt failed, falling back to plaintext:', err);
-        body = text;
+        body = textToSend;
       }
     }
 
     if (sendMessage) {
-      sendMessage('dm.message', { recipient_id: activeChat.peer_id, conversation_id: id, body });
+      if (editingMessage) {
+        sendMessage('dm.edit', { 
+          recipient_id: activeChat.peer_id, 
+          conversation_id: id, 
+          message_id: editingMessage.message_id, 
+          body 
+        });
+        setEditingMessage(null);
+      } else {
+        const payload: any = { recipient_id: activeChat.peer_id, conversation_id: id, body };
+        if (replyingToMessage) {
+          payload.reply_to_id = replyingToMessage.message_id;
+          setReplyingToMessage(null);
+        }
+        sendMessage('dm.message', payload);
+      }
     } else {
       console.error('[DMs] WebSocket not connected');
     }
-  }, [newMessage, id, user, activeChat]);
+  }, [newMessage, id, user, activeChat, editingMessage, replyingToMessage]);
 
   // Typing indicator — send once when user starts typing, auto-stop after 3s inactivity
   const handleTypingInput = useCallback((value: string) => {
@@ -308,10 +411,6 @@ export function DMs() {
       : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
-  const peerHasKey = !!activeChat?.peer_public_key;
-  const myHasKey = !!user?.public_key;
-  const isE2EE = peerHasKey && myHasKey;
-
   const timeAgo = (dateStr: string) => {
     if (!dateStr) return '';
     const diff = Date.now() - new Date(dateStr).getTime();
@@ -328,14 +427,9 @@ export function DMs() {
     <div style={{ flex: 1, display: 'flex', background: 'var(--blynx-900)', overflow: 'hidden' }}>
 
       {/* ── DM list sidebar ── */}
-      <div style={{ width: '280px', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--blynx-850)', flexShrink: 0 }}>
-        <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <div style={{ width: '280px', borderRight: 'none', display: 'flex', flexDirection: 'column', background: 'var(--blynx-850)', flexShrink: 0 }}>
+        <div style={{ height: '56px', padding: '0 16px', borderBottom: 'none', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
           <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: 'white' }}>Direct Messages</h2>
-          {/* E2EE indicator */}
-          <div title="End-to-end encrypted" style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 7px', borderRadius: '4px', background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)' }}>
-            <Lock size={10} color="#4ade80" />
-            <span style={{ fontSize: '10px', color: '#4ade80', fontWeight: 700 }}>E2EE</span>
-          </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {loadingDms ? (
@@ -351,8 +445,8 @@ export function DMs() {
             const isActive = chat.id === id;
             return (
               <div key={chat.id} onClick={() => navigate(`/app/dms/${chat.id}`)} style={{
-                display: 'flex', alignItems: 'center', padding: '10px 14px', cursor: 'pointer',
-                borderBottom: '1px solid var(--border)',
+                display: 'flex', alignItems: 'center', padding: '10px 12px', cursor: 'pointer',
+                margin: '2px 8px', borderRadius: '8px',
                 background: isActive ? 'var(--blynx-750)' : 'transparent', transition: 'background 0.1s',
               }}
                 onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--blynx-800)'; }}
@@ -368,17 +462,16 @@ export function DMs() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={{ color: 'white', fontWeight: 600, fontSize: '13px' }}>{chat.peer_name}</span>
-                      {chat.peer_public_key && <Lock size={9} color="#4ade80" />}
-                    </div>
+                    <span style={{ color: 'white', fontWeight: 600, fontSize: '13px' }}>{chat.peer_name}</span>
                     <span style={{ color: 'var(--text-muted)', fontSize: '11px', flexShrink: 0, marginLeft: '6px' }}>
                       {fmt(chat.last_message_at)}
                     </span>
                   </div>
                   <span style={{ color: 'var(--text-muted)', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                    {/* Don't show ciphertext in preview */}
-                    {chat.last_message?.startsWith('{') ? '🔒 Encrypted message' : (chat.last_message || 'No messages yet')}
+                    {chat.last_message_sender_id === user?.id && chat.last_message && (
+                      <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>You: </span>
+                    )}
+                    {chat.last_message?.startsWith('{') ? 'Encrypted message' : (chat.last_message || 'No messages yet')}
                   </span>
                 </div>
               </div>
@@ -392,7 +485,7 @@ export function DMs() {
         {id && activeChat ? (
           <>
             {/* Header */}
-            <div style={{ height: '64px', padding: '0 16px', borderBottom: '1px solid var(--border)', background: 'var(--blynx-850)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            <div style={{ height: '56px', padding: '0 16px', borderBottom: 'none', background: 'var(--blynx-850)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ position: 'relative', width: '32px', height: '32px' }}>
                   <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #7289da)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '13px', overflow: 'hidden' }}>
@@ -412,13 +505,6 @@ export function DMs() {
                   {onlineUsers.has(activeChat.peer_id) && (
                     <span style={{ fontSize: '11px', color: '#4ade80' }}>Online</span>
                   )}
-                </div>
-                {/* E2EE status badge */}
-                <div
-                  title={isE2EE ? 'Messages in this conversation are end-to-end encrypted. TryBlynx cannot read them.' : 'End-to-end encryption not available — the other person needs to open their DMs first.'}
-                  style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '4px', background: isE2EE ? 'rgba(74,222,128,0.08)' : 'rgba(250,166,26,0.08)', border: `1px solid ${isE2EE ? 'rgba(74,222,128,0.2)' : 'rgba(250,166,26,0.2)'}`, cursor: 'help' }}>
-                  {isE2EE ? <ShieldCheck size={11} color="#4ade80" /> : <Lock size={11} color="#faa61a" />}
-                  <span style={{ fontSize: '10px', color: isE2EE ? '#4ade80' : '#faa61a', fontWeight: 700 }}>{isE2EE ? 'E2EE' : 'Pending'}</span>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)', position: 'relative' }}>
@@ -455,25 +541,19 @@ export function DMs() {
               </div>
             </div>
 
-            {/* E2EE info banner — shown once at top of conversation */}
-            {isE2EE ? (
-              <div style={{ padding: '8px 16px', background: 'rgba(74,222,128,0.04)', borderBottom: '1px solid rgba(74,222,128,0.08)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'rgba(74,222,128,0.7)', flexShrink: 0 }}>
-                <Lock size={11} />
-                Messages are end-to-end encrypted. Only you and {activeChat.peer_name} can read them.
-              </div>
-            ) : (!window.crypto || !window.crypto.subtle) ? (
+            {(!window.crypto || !window.crypto.subtle) && (
               <div style={{ padding: '8px 16px', background: 'rgba(239,68,68,0.04)', borderBottom: '1px solid rgba(239,68,68,0.08)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'rgba(239,68,68,0.8)', flexShrink: 0 }}>
                 <Lock size={11} />
                 End-to-end encryption is disabled. TryBlynx is running in an insecure context (HTTP). Please access via HTTPS or localhost.
               </div>
-            ) : null}
+            )}
 
             {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column' }}>
               {!e2eeReady ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: '12px' }}>
                   <Loader size={22} color="var(--accent)" style={{ animation: 'spin 1s linear infinite' }} />
-                  <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Setting up end-to-end encryption…</span>
+                  <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Loading conversation…</span>
                 </div>
               ) : loadingMessages ? (
                 <div style={{ display: 'flex', justifyContent: 'center', padding: '32px' }}>
@@ -486,12 +566,6 @@ export function DMs() {
                   </div>
                   <p style={{ color: 'white', fontWeight: 600, margin: 0, fontSize: '15px' }}>{activeChat.peer_name}</p>
                   <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: 0 }}>This is the start of your conversation.</p>
-                  {isE2EE && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '20px', background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.15)' }}>
-                      <Lock size={11} color="#4ade80" />
-                      <span style={{ fontSize: '11px', color: '#4ade80' }}>End-to-end encrypted</span>
-                    </div>
-                  )}
                 </div>
               ) : (
                 messages.map((msg, i) => {
@@ -515,7 +589,12 @@ export function DMs() {
                     else                    borderRadius = `${s} ${r} ${r} ${s}`;
                   }
                   return (
-                    <div key={msg.message_id} style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: '8px', marginTop: isGroupStart ? '12px' : '2px' }}>
+                    <div 
+                      key={msg.message_id} 
+                      onMouseEnter={() => setHoveredMessageId(msg.message_id)}
+                      onMouseLeave={() => setHoveredMessageId(null)}
+                      style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: '8px', marginTop: isGroupStart ? '12px' : '2px' }}
+                    >
                       {!isMe && (
                         <div style={{ width: '28px', flexShrink: 0, alignSelf: 'flex-end', marginBottom: isGroupEnd ? '18px' : '2px' }}>
                           {isGroupEnd ? (
@@ -525,13 +604,68 @@ export function DMs() {
                           ) : <div style={{ width: '28px' }} />}
                         </div>
                       )}
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '70%' }}>
-                        <div style={{ padding: '9px 14px', borderRadius, background: isMe ? 'linear-gradient(135deg, var(--accent) 0%, #7289da 100%)' : 'var(--blynx-750)', color: 'white', fontSize: '14px', lineHeight: 1.45, border: 'none', wordBreak: 'break-word', boxShadow: isMe ? '0 2px 8px rgba(88,101,242,0.2)' : 'none' }}>
-                          {msg.body}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '70%', position: 'relative' }}>
+                        
+                        {/* Reply Context */}
+                        {msg.reply_to_id && (() => {
+                          const repliedTo = messages.find(m => m.message_id === msg.reply_to_id);
+                          const repliedToMe = repliedTo?.sender_id === user?.id;
+                          const repliedName = repliedToMe ? 'You' : activeChat.peer_name;
+                          return (
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--blynx-800)', padding: '6px 10px', borderRadius: '8px', opacity: 0.9 }}>
+                              <Reply size={12} /> 
+                              <span style={{ fontWeight: 600 }}>{repliedName}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+                                {repliedTo ? repliedTo.body : 'Original message'}
+                              </span>
+                            </div>
+                          );
+                        })()}
+
+                        <div style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ padding: '9px 14px', borderRadius, background: isMe ? 'linear-gradient(135deg, var(--accent) 0%, #7289da 100%)' : 'var(--blynx-750)', color: 'white', fontSize: '14px', lineHeight: 1.45, border: 'none', wordBreak: 'break-word', boxShadow: isMe ? '0 2px 8px rgba(88,101,242,0.2)' : 'none' }}>
+                            {msg.body.match(/^https?:\/\/.+\.(gif|png|jpg|jpeg|webp)(\?.*)?$/i) ? (
+                              <img src={msg.body} alt="attachment" style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '4px' }} />
+                            ) : (
+                              msg.body
+                            )}
+                            {msg.is_edited && <span style={{ fontSize: '10px', opacity: 0.6, marginLeft: '6px' }}>(edited)</span>}
+                          </div>
+
+                          {/* Hover Actions Menu */}
+                          {(hoveredMessageId === msg.message_id || reactionPickerMsgId === msg.message_id) && (
+                            <div style={{ display: 'flex', gap: '4px', background: 'var(--blynx-800)', padding: '4px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)', zIndex: 10, position: 'relative' }}>
+                              <button onClick={() => setReactionPickerMsgId(reactionPickerMsgId === msg.message_id ? null : msg.message_id)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', borderRadius: '4px' }} title="React"><Smile size={14} /></button>
+                              <button onClick={() => setReplyingToMessage(msg)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', borderRadius: '4px' }} title="Reply"><Reply size={14} /></button>
+                              <button onClick={() => navigator.clipboard.writeText(msg.body)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', borderRadius: '4px' }} title="Copy"><Copy size={14} /></button>
+                              {isMe && <button onClick={() => { setEditingMessage(msg); setNewMessage(msg.body); inputRef.current?.focus(); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', borderRadius: '4px' }} title="Edit"><Edit2 size={14} /></button>}
+                              {isMe && <button onClick={() => handleDeleteMessage(msg.message_id)} style={{ background: 'none', border: 'none', color: '#ed4245', cursor: 'pointer', padding: '4px', borderRadius: '4px' }} title="Delete"><Trash2 size={14} /></button>}
+
+                              {/* Mini Reaction Picker Popup */}
+                              {reactionPickerMsgId === msg.message_id && (
+                                <div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', marginBottom: '8px', background: 'var(--blynx-850)', border: '1px solid var(--border)', borderRadius: '20px', padding: '6px 8px', display: 'flex', gap: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+                                  {['❤️','😂','😮','😢','🙏','👍'].map(emoji => (
+                                    <button key={emoji} onClick={() => handleReactMessage(msg.message_id, emoji)} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', transition: 'transform 0.1s' }} onMouseEnter={e => e.currentTarget.style.transform='scale(1.2)'} onMouseLeave={e => e.currentTarget.style.transform='scale(1)'}>{emoji}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
+
+                        {/* Reactions Row */}
+                        {msg.reactions && msg.reactions.length > 0 && (
+                          <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap', justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                            {msg.reactions.map((r: any) => (
+                              <button key={r.emoji} onClick={() => handleReactMessage(msg.message_id, r.emoji)} style={{ background: r.me ? 'rgba(88,101,242,0.2)' : 'var(--blynx-800)', border: `1px solid ${r.me ? 'var(--accent)' : 'var(--border)'}`, borderRadius: '12px', padding: '2px 6px', fontSize: '11px', color: 'white', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                {r.emoji} {r.count > 1 && <span style={{ color: 'var(--text-muted)' }}>{r.count}</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
                         {isGroupEnd && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', ...(isMe ? { marginRight: '2px' } : { marginLeft: '2px' }) }}>
-                            {msg._encrypted && <Lock size={9} color="rgba(74,222,128,0.6)" />}
                             <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{fmt(msg.created_at)}</span>
                           </div>
                         )}
@@ -556,27 +690,146 @@ export function DMs() {
               )}
             </div>
 
+            {/* E2EE Warning */}
+            {user?.public_key && !loadPrivateKey(user.id) && (
+              <div style={{ background: 'rgba(250, 166, 26, 0.1)', border: '1px solid rgba(250, 166, 26, 0.3)', color: 'var(--yellow)', padding: '8px 12px', margin: '0 14px 10px', borderRadius: '8px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontWeight: 600 }}>Decryption Key Missing:</span> You cannot read old encrypted messages. Please log out and log back in to restore your private key.
+              </div>
+            )}
+
             {/* Input */}
-            <div style={{ padding: '12px 14px', background: 'var(--blynx-850)', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
-              {/* Encryption hint */}
-              {!isE2EE && (
-                <p style={{ margin: '0 0 8px', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Lock size={10} />
-                  {!myHasKey ? 'Setting up encryption…' : `Waiting for ${activeChat.peer_name} to open DMs to enable E2EE`}
-                </p>
+            <div style={{ padding: '0 14px 14px', background: 'transparent', flexShrink: 0 }}>
+              
+              {/* Context Banner for Replying/Editing */}
+              {(replyingToMessage || editingMessage) && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--blynx-800)', borderTopLeftRadius: '12px', borderTopRightRadius: '12px', borderBottom: '1px solid var(--border)', fontSize: '13px', color: 'var(--text-muted)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {editingMessage ? <Edit2 size={14} /> : <Reply size={14} />}
+                    <span>{editingMessage ? 'Editing message' : `Replying to ${replyingToMessage.sender_name || 'message'}`}</span>
+                  </div>
+                  <button onClick={() => { setEditingMessage(null); setReplyingToMessage(null); setNewMessage(''); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }} title="Cancel">
+                    <X size={14} />
+                  </button>
+                </div>
               )}
-              <div style={{ display: 'flex', gap: '8px' }}>
+
+              <div className="chat-input-wrapper" style={{ position: 'relative', borderTopLeftRadius: (replyingToMessage || editingMessage) ? 0 : undefined, borderTopRightRadius: (replyingToMessage || editingMessage) ? 0 : undefined }}>
+                <button 
+                  onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
+                  style={{ 
+                    background: 'none', border: 'none', color: showAttachmentMenu ? 'var(--accent)' : 'var(--text-muted)', 
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    padding: '8px', marginRight: '8px', borderRadius: '50%',
+                    transition: 'background 0.15s, color 0.15s'
+                  }}
+                  onMouseEnter={e => { if (!showAttachmentMenu) e.currentTarget.style.color = 'var(--text-primary)' }}
+                  onMouseLeave={e => { if (!showAttachmentMenu) e.currentTarget.style.color = 'var(--text-muted)' }}
+                >
+                  <Smile size={20} />
+                </button>
+
+                {showAttachmentMenu && (
+                  <div style={{
+                    position: 'absolute', bottom: 'calc(100% + 12px)', left: 0,
+                    width: '320px', height: '300px', background: 'var(--blynx-800)',
+                    border: '1px solid var(--border)', borderRadius: '12px',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column',
+                    overflow: 'hidden', zIndex: 50
+                  }}>
+                    <div style={{ display: 'flex', background: 'var(--blynx-850)', padding: '8px', gap: '4px', borderBottom: '1px solid var(--border)' }}>
+                      {[
+                        { id: 'emoji', icon: Smile, label: 'Emoji' },
+                        { id: 'gif', icon: ImageIcon, label: 'GIFs' },
+                        { id: 'sticker', icon: StickyNote, label: 'Stickers' }
+                      ].map(tab => (
+                        <button key={tab.id} onClick={() => setAttachmentTab(tab.id as any)} style={{
+                          flex: 1, padding: '8px', background: attachmentTab === tab.id ? 'var(--blynx-700)' : 'transparent',
+                          border: 'none', borderRadius: '8px', color: attachmentTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: 'pointer',
+                          fontSize: '12px', fontWeight: 600, transition: 'background 0.15s'
+                        }}
+                        onMouseEnter={e => { if (attachmentTab !== tab.id) e.currentTarget.style.background = 'var(--blynx-750)' }}
+                        onMouseLeave={e => { if (attachmentTab !== tab.id) e.currentTarget.style.background = 'transparent' }}>
+                          <tab.icon size={16} />
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                      {attachmentTab === 'emoji' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px' }}>
+                          {['😀','😂','🥰','😎','🤔','😭','😡','👍','🎉','🔥','❤️','✨','🙌','👀','💯','💀','😊','🥺','😉','😍','😘','😜','🤪','🤫','🤭'].map(e => (
+                            <button key={e} onClick={() => { setNewMessage(prev => prev + e); setShowAttachmentMenu(false); inputRef.current?.focus(); }} style={{
+                              background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', padding: '4px',
+                              borderRadius: '8px', transition: 'background 0.1s'
+                            }}
+                            onMouseEnter={ev => ev.currentTarget.style.background = 'var(--blynx-700)'}
+                            onMouseLeave={ev => ev.currentTarget.style.background = 'none'}>
+                              {e}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {attachmentTab === 'gif' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                          {[
+                            'https://media.tenor.com/2sXAaHqF35QAAAAM/hello-there.gif',
+                            'https://media.tenor.com/aKFaZBrZhwcAAAAM/excited-spin.gif',
+                            'https://media.tenor.com/71jY8Vovv48AAAAM/ok-ok-ok.gif',
+                            'https://media.tenor.com/8QzO4hZ394MAAAAM/dance-party.gif',
+                            'https://media.tenor.com/Y12A6v8bF0YAAAAM/cat-typing.gif',
+                            'https://media.tenor.com/Z4Y4n2yI55EAAAAM/no-nope.gif'
+                          ].map((url, i) => (
+                            <img key={i} src={url} alt="gif" onClick={() => { handleSend(undefined, url); setShowAttachmentMenu(false); }} style={{
+                              width: '100%', height: '80px', objectFit: 'cover', borderRadius: '8px', cursor: 'pointer',
+                              border: '2px solid transparent', transition: 'border-color 0.15s'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+                            onMouseLeave={e => e.currentTarget.style.borderColor = 'transparent'} />
+                          ))}
+                        </div>
+                      )}
+                      {attachmentTab === 'sticker' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                          {[
+                            'https://cdn.discordapp.com/stickers/1039992466032070747.png?size=160',
+                            'https://cdn.discordapp.com/stickers/1039992459346366525.png?size=160',
+                            'https://cdn.discordapp.com/stickers/1039992463771353138.png?size=160',
+                            'https://cdn.discordapp.com/stickers/1039992461460291654.png?size=160',
+                            'https://cdn.discordapp.com/stickers/1039992456951410778.png?size=160',
+                            'https://cdn.discordapp.com/stickers/1039992454652936272.png?size=160'
+                          ].map((url, i) => (
+                            <img key={i} src={url} alt="sticker" onClick={() => { handleSend(undefined, url); setShowAttachmentMenu(false); }} style={{
+                              width: '100%', aspectRatio: '1', objectFit: 'contain', cursor: 'pointer',
+                              transform: 'scale(1)', transition: 'transform 0.15s'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.1)'}
+                            onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
                 <input
                   ref={inputRef}
                   type="text" value={newMessage}
                   onChange={e => handleTypingInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                  placeholder={`Message ${activeChat.peer_name}${isE2EE ? ' 🔒' : ''}…`}
-                  style={{ flex: 1, background: 'var(--blynx-750)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 14px', color: 'white', fontSize: '14px', outline: 'none', fontFamily: 'inherit' }}
-                  onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--accent-glow)'; }}
-                  onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none'; }}
+                  placeholder={`Message ${activeChat.peer_name}…`}
                 />
-                <button onClick={handleSend} disabled={!newMessage.trim()} style={{ width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0, border: 'none', cursor: newMessage.trim() ? 'pointer' : 'not-allowed', background: newMessage.trim() ? 'var(--accent)' : 'var(--blynx-700)', color: newMessage.trim() ? 'white' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
+                <button 
+                  onClick={handleSend} 
+                  disabled={!newMessage.trim()} 
+                  style={{ 
+                    width: '36px', height: '36px', borderRadius: '50%', flexShrink: 0, border: 'none', 
+                    cursor: newMessage.trim() ? 'pointer' : 'not-allowed', 
+                    background: newMessage.trim() ? 'var(--accent)' : 'transparent', 
+                    color: newMessage.trim() ? 'white' : 'var(--text-muted)', 
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' 
+                  }}
+                >
                   <Send size={16} />
                 </button>
               </div>

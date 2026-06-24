@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
 	"tryblynx/internal/auth"
 	"tryblynx/internal/models"
 )

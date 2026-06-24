@@ -113,7 +113,7 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
       <div style={{
         padding: '0 20px',
         height: '56px',
-        borderBottom: '1px solid var(--border)',
+        borderBottom: 'none',
         background: 'var(--blynx-850)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         flexShrink: 0,
@@ -352,9 +352,8 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
 
       {/* Input */}
       <div style={{
-        padding: '12px 16px',
-        background: 'var(--blynx-850)',
-        borderTop: '1px solid var(--border)',
+        padding: '0 16px 16px',
+        background: 'transparent',
         flexShrink: 0,
       }}>
         {isPeerDisconnected ? (
@@ -362,7 +361,7 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
             <button
               onClick={handleDisconnect}
               style={{
-                flex: 1, padding: '12px', borderRadius: '8px', border: 'none',
+                flex: 1, padding: '12px', borderRadius: '14px', border: 'none',
                 background: 'var(--blynx-700)', color: 'white',
                 fontSize: '14px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
               }}
@@ -373,7 +372,7 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
               onClick={handleSkip}
               className="btn-accent"
               style={{
-                flex: 1, padding: '12px', borderRadius: '8px', border: 'none',
+                flex: 1, padding: '12px', borderRadius: '14px', border: 'none',
                 fontSize: '14px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
               }}
@@ -383,35 +382,28 @@ export function ChatRoom({ onLeave }: { onLeave?: () => void }) {
             </button>
           </div>
         ) : (
-          <form onSubmit={handleSend} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <div style={{ flex: 1, position: 'relative' }}>
-              <input
-                ref={inputRef}
-                type="text"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Send a message…"
-                className="input-field"
-                style={{ paddingRight: '12px' }}
-                maxLength={5000}
-              />
-            </div>
+          <form onSubmit={handleSend} className="chat-input-wrapper">
+            <input
+              ref={inputRef}
+              type="text"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Send a message…"
+              maxLength={5000}
+            />
             <button
               type="submit"
               disabled={!message.trim()}
               style={{
-                width: '40px', height: '40px',
-                borderRadius: '8px',
-                border: 'none',
+                width: '36px', height: '36px', borderRadius: '50%', flexShrink: 0, border: 'none',
                 cursor: message.trim() ? 'pointer' : 'not-allowed',
-                background: message.trim() ? 'var(--accent)' : 'var(--blynx-600)',
+                background: message.trim() ? 'var(--accent)' : 'transparent',
                 color: message.trim() ? 'white' : 'var(--text-muted)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 transition: 'background 0.12s, transform 0.1s',
-                flexShrink: 0,
               }}
             >
-              <Send size={17} />
+              <Send size={16} />
             </button>
           </form>
         )}

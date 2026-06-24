@@ -6,6 +6,7 @@ import {
 import { api } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
 import { useNotificationStore } from '../store/notificationStore';
+import { useUIStore } from '../store/uiStore';
 import { useNavigate } from 'react-router-dom';
 
 type FriendStatus = 'none' | 'pending_outgoing' | 'pending_incoming' | 'accepted' | 'blocked';
@@ -83,7 +84,7 @@ export function Search() {
   });
 
   const handleRemove = (userId: string) => withLoading(userId, async () => {
-    if (!window.confirm('Remove this friend?')) return;
+    if (!await useUIStore.getState().showConfirm('Remove Friend', 'Remove this friend?')) return;
     await api.removeFriend(userId);
     setStatus(userId, 'none');
   });
@@ -94,9 +95,9 @@ export function Search() {
       navigate(`/app/dms/${res.conversation_id}`);
     } catch (err: any) {
       if (err.message === 'not_friends') {
-        alert('You need to be friends first to send a direct message.');
+        useUIStore.getState().showAlert('Not Friends', 'You need to be friends first to send a direct message.');
       } else {
-        alert(err.message || 'Could not start DM.');
+        useUIStore.getState().showAlert('Error', err.message || 'Could not start DM.');
       }
     }
   };
@@ -161,8 +162,8 @@ export function Search() {
   };
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--blynx-900)' }}>
-      <div style={{ padding: '24px', borderBottom: '1px solid var(--border)', background: 'var(--blynx-850)' }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--blynx-850)' }}>
+      <div style={{ padding: '24px', borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'transparent' }}>
         <h2 style={{ margin: '0 0 16px', fontSize: '22px', color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <SearchIcon size={22} color="var(--accent)" /> Find Users
         </h2>
