@@ -1,8 +1,8 @@
-# TryBlynx — The Grand UI Polish (v2)
+# Lynxus — The Grand UI Polish (v2)
 
 ## What This Plan Does
 
-Transform TryBlynx from a "backend-first prototype" into a **polished, installable, cross-platform app** that feels fast, looks like nothing else out there, and earns users' trust from the first second — phone, tablet, desktop, as a website *and* as an installable PWA app.
+Transform Lynxus from a "backend-first prototype" into a **polished, installable, cross-platform app** that feels fast, looks like nothing else out there, and earns users' trust from the first second — phone, tablet, desktop, as a website *and* as an installable PWA app.
 
 ---
 
@@ -22,7 +22,7 @@ Transform TryBlynx from a "backend-first prototype" into a **polished, installab
 
 ### Why People Come to Random Chat Apps
 
-The research is clear: people come to apps like TryBlynx because they're **lonely, curious, or socially anxious** — NOT because they want another social media platform. They want:
+The research is clear: people come to apps like Lynxus because they're **lonely, curious, or socially anxious** — NOT because they want another social media platform. They want:
 
 - A place where they can be themselves without judgment
 - The thrill of meeting someone new without the pressure of dating apps
@@ -32,9 +32,9 @@ The research is clear: people come to apps like TryBlynx because they're **lonel
 > [!IMPORTANT]
 > **Our landing page and brand tone must connect with these feelings honestly — not with marketing hype.** We don't sell features. We acknowledge the emotion, then show we've built something that respects it.
 
-### Why TryBlynx is Different (vs Omegle/Emerald Chat)
+### Why Lynxus is Different (vs Omegle/Emerald Chat)
 
-| | Omegle (RIP) | Emerald Chat | **TryBlynx** |
+| | Omegle (RIP) | Emerald Chat | **Lynxus** |
 |---|---|---|---|
 | Safety | None — wild west | Basic reporting | **AI moderation + shadowbanning + E2EE DMs** |
 | Privacy | IP-exposed | Account required | **Anonymous guest mode + E2EE by default** |
@@ -57,13 +57,13 @@ This comparison drives the **landing page messaging** — we don't trash competi
 | Brand identity | Build from scratch — name analysis + color psychology |
 | Sound effects | ✅ Gen-Z appropriate — subtle, satisfying, never annoying |
 | Landing page tone | **Trust-building, not advertising.** Connect with insecurities, earn trust honestly |
-| Icons | **Custom icon system** — unique to TryBlynx brand (see Phase 3) |
+| Icons | **Custom icon system** — unique to Lynxus brand (see Phase 3) |
 
 ---
 
 ## Proposed Changes
 
-### Phase 1 — The TryBlynx Color Identity
+### Phase 1 — The Lynxus Color Identity
 
 > [!IMPORTANT]
 > This is the most critical decision. Every pixel in the app flows from this.
@@ -141,7 +141,7 @@ TEXT HIERARCHY
 - **Passes WCAG AA** contrast ratios at every level
 - **Feels warm** even in dark mode — the slight warm tint in surfaces matters
 
-#### [MODIFY] [index.css](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/index.css)
+#### [MODIFY] [index.css](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/index.css)
 
 Complete rewrite with the new Midnight Ember token system. Also includes:
 
@@ -178,7 +178,7 @@ Complete rewrite with the new Midnight Ember token system. Also includes:
 
 ### Phase 2 — Responsive Layout Revolution
 
-#### [MODIFY] [Dashboard.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/Dashboard.tsx)
+#### [MODIFY] [Dashboard.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/Dashboard.tsx)
 
 **New Layout Architecture:**
 
@@ -223,7 +223,7 @@ Mobile-only bottom navigation:
 - `env(safe-area-inset-bottom)` for notched phones
 - Slides up on mount, spring animation
 
-#### [MODIFY] [Sidebar.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/Sidebar.tsx)
+#### [MODIFY] [Sidebar.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/Sidebar.tsx)
 
 Desktop-only persistent sidebar:
 - 240px wide, fixed position
@@ -242,7 +242,7 @@ Desktop-only persistent sidebar:
 
 #### Icon Style: "Rounded Duotone"
 
-After researching 2025-2026 icon trends, the best fit for TryBlynx is a **rounded duotone** style:
+After researching 2025-2026 icon trends, the best fit for Lynxus is a **rounded duotone** style:
 
 | Property | Value | Why |
 |---|---|---|
@@ -281,7 +281,7 @@ For the ~40 utility icons (Send, Lock, Check, X, Plus, etc.), we keep Lucide Rea
 - Optional duotone fill for key icons
 
 **Phase 3c — App Icon / Logo:**
-- The TryBlynx logo: A stylized lynx eye (the "keen sight" theme) rendered in the teal-to-mint gradient
+- The Lynxus logo: A stylized lynx eye (the "keen sight" theme) rendered in the teal-to-mint gradient
 - Simple enough to work as a 16px favicon AND a 512px PWA icon
 - Recognizable in silhouette
 
@@ -290,13 +290,13 @@ For the ~40 utility icons (Send, Lock, Check, X, Plus, etc.), we keep Lucide Rea
 Contains all custom Blynx icons as React components:
 - `BlynxIcon.tsx` — wrapper component with size/color/active props
 - `NavIcons.tsx` — 10 core navigation icon SVGs
-- `Logo.tsx` — the TryBlynx wordmark + icon
+- `Logo.tsx` — the Lynxus wordmark + icon
 
 ---
 
 ### Phase 4 — Page-by-Page Redesign
 
-#### [MODIFY] [LandingPage.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/LandingPage.tsx)
+#### [MODIFY] [LandingPage.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/LandingPage.tsx)
 
 **Current:** Generic "The new way to hang out online" with 3 feature cards.
 
@@ -308,7 +308,7 @@ The landing page should feel like a **conversation, not a billboard.** It connec
 Section 1: "The Hook" (emotional connection)
 ────────────────────────────────────────────
 Headline: "Tired of talking to bots?"
-Subhead:  "Yeah, us too. TryBlynx connects you with real people.
+Subhead:  "Yeah, us too. Lynxus connects you with real people.
            No bots. No ads. No BS."
 
 [Start Chatting →]  [Continue as Guest]
@@ -369,7 +369,7 @@ Footer: Terms · Privacy · "Built with care, not venture capital"
 
 ---
 
-#### [MODIFY] [AuthForm.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/AuthForm.tsx)
+#### [MODIFY] [AuthForm.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/AuthForm.tsx)
 
 - **Desktop**: Split layout — brand message on left ("Your next conversation starts here"), form on right
 - **Mobile**: Full-screen form with compact brand header
@@ -382,7 +382,7 @@ Footer: Terms · Privacy · "Built with care, not venture capital"
 
 ---
 
-#### [MODIFY] [Home.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/Home.tsx)
+#### [MODIFY] [Home.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/Home.tsx)
 
 - **Greeting**: "Good evening, {name}" with time-of-day awareness
 - **Quick Actions**: 3 large cards (Text Chat, Video Chat, Groups) with the new Blynx duotone icons and gradient hover borders
@@ -392,7 +392,7 @@ Footer: Terms · Privacy · "Built with care, not venture capital"
 
 ---
 
-#### [MODIFY] [TextChat.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/TextChat.tsx)
+#### [MODIFY] [TextChat.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/TextChat.tsx)
 
 - Matchmaking screen: immersive full-screen experience
   - Animated radar ripple in teal (CSS keyframes, not canvas)
@@ -403,7 +403,7 @@ Footer: Terms · Privacy · "Built with care, not venture capital"
 
 ---
 
-#### [MODIFY] [DMs.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/DMs.tsx)
+#### [MODIFY] [DMs.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/DMs.tsx)
 
 - **Mobile responsive**: DM list and chat are separate views (not side-by-side)
 - DM list gets search/filter input at top
@@ -415,7 +415,7 @@ Footer: Terms · Privacy · "Built with care, not venture capital"
 
 ---
 
-#### [MODIFY] [ChatRoom.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/ChatRoom.tsx)
+#### [MODIFY] [ChatRoom.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/ChatRoom.tsx)
 
 New message bubble design (shared across TextChat, DMs, GroupChat):
 - My messages: teal gradient background (`accent → accent-hover`)
@@ -428,7 +428,7 @@ New message bubble design (shared across TextChat, DMs, GroupChat):
 
 ---
 
-#### [MODIFY] [Settings.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/Settings.tsx)
+#### [MODIFY] [Settings.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/Settings.tsx)
 
 - **Tabbed navigation**: Account | Matchmaking | Appearance | Privacy
 - **Appearance tab**: Theme preference (dark/light/system — dark is default), accent color preview
@@ -439,7 +439,7 @@ New message bubble design (shared across TextChat, DMs, GroupChat):
 
 ---
 
-#### [MODIFY] [GroupChat.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/GroupChat.tsx)
+#### [MODIFY] [GroupChat.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/GroupChat.tsx)
 
 - Group list: proper cards with member count, last active, group avatar
 - Active group: collapsible member sidebar (desktop), bottom sheet (mobile)
@@ -447,7 +447,7 @@ New message bubble design (shared across TextChat, DMs, GroupChat):
 
 ---
 
-#### [MODIFY] [VideoChat.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/VideoChat.tsx) + [VideoRoom.tsx](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/src/components/VideoRoom.tsx)
+#### [MODIFY] [VideoChat.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/VideoChat.tsx) + [VideoRoom.tsx](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/src/components/VideoRoom.tsx)
 
 - Self-view: PiP (small, draggable, rounded corners)
 - Floating control bar: mute, camera toggle, end call, chat overlay toggle
@@ -516,7 +516,7 @@ All animations respect `prefers-reduced-motion: reduce` — they simplify to ins
 
 ```json
 {
-  "name": "TryBlynx",
+  "name": "Lynxus",
   "short_name": "Blynx",
   "description": "Meet real people. No bots. No BS.",
   "start_url": "/app",
@@ -544,7 +544,7 @@ Service worker:
 - Push notification support (for match found, new DM)
 - Background sync queue for messages sent offline
 
-#### [MODIFY] [index.html](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/index.html)
+#### [MODIFY] [index.html](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/index.html)
 
 Add:
 - `<link rel="manifest" href="/manifest.json">`
@@ -552,11 +552,11 @@ Add:
 - `<meta name="theme-color" content="#14b8a6">`
 - `<meta name="apple-mobile-web-app-capable" content="yes">`
 - Apple touch icons, og:image, og:title, og:description
-- `<title>TryBlynx — Meet Real People</title>`
+- `<title>Lynxus — Meet Real People</title>`
 - Service worker registration
 - Preconnect hints for API + fonts CDN
 
-#### [MODIFY] [vite.config.ts](file:///c:/Users/JOHNSON/Desktop/TryBlynx/frontend/vite.config.ts)
+#### [MODIFY] [vite.config.ts](file:///c:/Users/JOHNSON/Desktop/Lynxus/frontend/vite.config.ts)
 
 Add `vite-plugin-pwa` for automatic SW generation + manifest injection.
 
