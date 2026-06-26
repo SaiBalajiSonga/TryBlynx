@@ -5,11 +5,12 @@ import { useNotificationStore } from '../store/notificationStore';
 import type { AppNotification } from '../store/notificationStore';
 import { useLocation, useNavigate, Routes, Route, Navigate } from 'react-router-dom';
 import {
-  Menu, Bell, MessageSquare, Zap, Crown, LogOut, Settings,
+  Menu, Bell, MessageSquare, Crown, LogOut, Settings,
   Home as HomeIcon, Video, Users, Search as SearchIcon, Shield, Star,
   Terminal, Check, UserCircle,
   Clipboard,
 } from 'lucide-react';
+import { LynxLogo } from './LynxLogo';
 import { SettingsView } from './Settings';
 import { Home } from './Home';
 import { TextChat } from './TextChat';
@@ -155,10 +156,8 @@ export function Dashboard() {
             <Menu size={18} />
           </button>
           <div onClick={() => navigate('/app')} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginLeft: '4px' }}>
-            <div style={{ width: '22px', height: '22px', background: 'var(--accent)', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 12px var(--accent-glow)', flexShrink: 0 }}>
-              <Zap size={11} color="white" fill="white" />
-            </div>
-            <span style={{ fontWeight: 700, fontSize: '14px', color: 'white', letterSpacing: '-0.3px' }}>TryBlynx</span>
+            <LynxLogo size={24} />
+            <span style={{ fontWeight: 700, fontSize: '14px', color: 'white', letterSpacing: '-0.3px' }}>Lynxus</span>
           </div>
         </div>
 
@@ -260,7 +259,6 @@ export function Dashboard() {
                     {user?.is_moderator && <Star size={12} color="#3399ff" />}
                   </div>
                   <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>@{user?.username}</p>
-                  {user?.is_anonymous && <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#faa61a' }}>⚡ Guest account</p>}
                 </div>
                 <div style={{ padding: '6px' }}>
                   {[
