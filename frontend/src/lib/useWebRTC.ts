@@ -14,7 +14,7 @@ async function getIceServers(): Promise<RTCIceServer[]> {
   try {
     const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8080/api';
     const res = await fetch(`${API_URL}/webrtc/ice-servers`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('tryblynx_token')}` }
+      headers: { Authorization: `Bearer ${localStorage.getItem('lynxus_token')}` }
     });
     if (res.ok) {
       const data = await res.json();
