@@ -35,26 +35,26 @@ const (
 	ContextKeyIsVIP contextKey = "isVIP"
 	// ContextKeyShadowbanned stores the user's shadowban status.
 	ContextKeyShadowbanned contextKey = "shadowbanned"
-	// ContextKeyIsAnonymous stores whether this is a guest account.
-	ContextKeyIsAnonymous contextKey = "isAnonymous"
 )
 
 // Middleware returns an HTTP middleware that extracts and validates
-// a JWT from the Authorization header (Bearer scheme).
+// a JWT from the Authorization header (Bearer scheme) and loads
+// user status flags using a caller-provided callback.
 //
 // Parameters:
-//   - jwtSecret: The HMAC-SHA256 signing key for token validation.
+//   - jwtSecret:       The HMAC-SHA256 signing key for token validation.
+//   - fetchUserClaims: Callback function to fetch user flags from the store.
 //
 // Behavior:
 //   - Reads the "Authorization: Bearer <token>" header.
 //   - Validates the token via auth.ValidateToken.
-//   - On success: injects UserID, IsVIP, Shadowbanned into context
-//     and calls next.ServeHTTP.
+//   - Invokes fetchUserClaims to retrieve user flags (VIP, shadowbanned, anonymous).
+//   - On success: injects UserID, IsVIP, Shadowbanned, IsAnonymous into context.
 //   - On failure: responds with 401 Unauthorized JSON error.
 //
 // Returns:
 //   - func(http.Handler) http.Handler: A chi-compatible middleware.
-func Middleware(jwtSecret string) func(http.Handler) http.Handler {
+func Middleware(jwtSecret string, fetchUserClaims func(ctx context.Context, userID uuid.UUID) (isVIP bool, shadowbanned bool, err error)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// ── Extract token from header ────────────────────
@@ -76,16 +76,25 @@ func Middleware(jwtSecret string) func(http.Handler) http.Handler {
 			// ── Validate token ───────────────────────────────
 			claims, err := ValidateToken(jwtSecret, tokenStr)
 			if err != nil {
+				// Log the exact error to the console for debugging
+				println("JWT Validation Error:", err.Error())
 				w.Header().Set("Content-Type", "application/json")
 				http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
 				return
 			}
 
+			// ── Fetch database claims ────────────────────────
+			isVIP, shadowbanned, err := fetchUserClaims(r.Context(), claims.UserID)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				http.Error(w, `{"error":"user account not registered or active on this platform"}`, http.StatusUnauthorized)
+				return
+			}
+
 			// ── Inject claims into context ───────────────────
 			ctx := context.WithValue(r.Context(), ContextKeyUserID, claims.UserID)
-			ctx = context.WithValue(ctx, ContextKeyIsVIP, claims.IsVIP)
-			ctx = context.WithValue(ctx, ContextKeyShadowbanned, claims.Shadowbanned)
-			ctx = context.WithValue(ctx, ContextKeyIsAnonymous, claims.IsAnonymous)
+			ctx = context.WithValue(ctx, ContextKeyIsVIP, isVIP)
+			ctx = context.WithValue(ctx, ContextKeyShadowbanned, shadowbanned)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -118,10 +127,3 @@ func IsShadowbannedFromContext(ctx context.Context) bool {
 	return sb
 }
 
-// IsAnonymousFromContext extracts the guest-account flag from the
-// request context. Returns false if the middleware has not run.
-// Use this for fast guest-blocking without a DB lookup.
-func IsAnonymousFromContext(ctx context.Context) bool {
-	anon, _ := ctx.Value(ContextKeyIsAnonymous).(bool)
-	return anon
-}
