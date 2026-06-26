@@ -39,8 +39,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"tryblynx/internal/config"
-	"tryblynx/internal/db"
+	"lynxus/internal/config"
+	"lynxus/internal/db"
 )
 
 // Channel buffer sizes tuned for 10K-20K concurrent connections.
