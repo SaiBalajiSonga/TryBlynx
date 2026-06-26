@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@fingerprintjs/fingerprintjs": "^5.2.0",
+    "@noble/post-quantum": "^0.6.1",
     "@tensorflow/tfjs": "^4.22.0",
     "@tensorflow/tfjs-backend-webgl": "^4.22.0",
     "lucide-react": "^1.17.0",
