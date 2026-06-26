@@ -40,7 +40,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"tryblynx/internal/db"
+	"lynxus/internal/db"
 )
 
 // ──────────────────────────────────────────────────────────────
