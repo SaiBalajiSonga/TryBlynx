@@ -87,6 +87,14 @@ html, body {
   cursor: pointer;
   font-family: inherit;
   transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  position: relative;
+  overflow: hidden;
+}
+.btn-accent .arrow-icon {
+  transition: transform 0.2s ease;
+}
+.btn-accent:hover .arrow-icon {
+  transform: translateX(4px);
 }
 .btn-accent:hover {
   background: var(--accent-hover);
@@ -103,22 +111,88 @@ html, body {
 }
 
 .input-field {
-  background: var(--blynx-750);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 10px 16px;
+  background: var(--blynx-900);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 14px;
+  height: 44px;
   color: var(--text-primary);
   width: 100%;
   font-family: inherit;
   font-size: 14px;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  font-weight: 400;
+  line-height: 1;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
   outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.input-field:hover:not(:focus) {
+  background: var(--blynx-850);
 }
 .input-field:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  border-color: transparent;
+  background: var(--blynx-900);
 }
-.input-field::placeholder { color: var(--text-muted); }
+.input-field:-webkit-autofill,
+.input-field:-webkit-autofill:hover, 
+.input-field:-webkit-autofill:focus, 
+.input-field:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 30px var(--blynx-900) inset !important;
+  -webkit-text-fill-color: var(--text-primary) !important;
+  border-color: transparent !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+.input-field.error {
+  border-color: #ed4245;
+}
+.input-field.error:focus {
+  background: rgba(237, 66, 69, 0.04);
+  box-shadow: 0 0 0 3px rgba(237, 66, 69, 0.15);
+}
+.input-field.valid {
+  border-color: rgba(67, 181, 129, 0.7);
+}
+.input-field.valid:focus {
+  background: rgba(67, 181, 129, 0.04);
+  box-shadow: 0 0 0 3px rgba(67, 181, 129, 0.15);
+}
+.input-field::placeholder {
+  color: rgba(255, 255, 255, 0.2);
+  font-weight: 400;
+}
+
+.auth-card {
+  background: var(--blynx-800);
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+}
+
+@media (max-width: 480px) {
+  .auth-card {
+    padding: 20px 16px;
+  }
+}
+
+.auth-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: #8B8FA8;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.auth-legal-link {
+  color: var(--accent);
+  text-decoration: none;
+  transition: text-decoration 0.2s;
+}
+.auth-legal-link:hover {
+  text-decoration: underline;
+}
 
 .chat-input-wrapper {
   display: flex;
