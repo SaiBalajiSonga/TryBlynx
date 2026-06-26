@@ -1,8 +1,9 @@
-module tryblynx
+module lynxus
 
 go 1.23
 
 require (
+	github.com/MicahParks/keyfunc/v3 v3.3.3
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
