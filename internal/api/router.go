@@ -15,18 +15,21 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/stripe/stripe-go/v81"
 
-	"tryblynx/internal/auth"
-	"tryblynx/internal/config"
-	"tryblynx/internal/db"
-	"tryblynx/internal/ws"
+	"lynxus/internal/auth"
+	"lynxus/internal/config"
+	"lynxus/internal/db"
+	"lynxus/internal/ws"
 )
 
 // Server holds all dependencies required by HTTP handlers.
@@ -83,9 +86,9 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 	s.Router.Use(corsMiddleware(cfg.AllowedOrigin))
 
 	// ── Public routes (no authentication) ─────────────────────
-	s.Router.Post("/api/register", s.RegisterHandler)
-	s.Router.Post("/api/login", s.LoginHandler)
+	s.Router.Post("/api/auth/sync", s.SyncProfileHandler)
 
+	s.Router.Get("/api/auth/check-username", s.CheckUsernameHandler)
 	s.Router.Post("/api/webhook/stripe", s.StripeWebhookHandler)
 
 	s.Router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +97,16 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 
 	// ── Authenticated routes ──────────────────────────────────
 	s.Router.Group(func(r chi.Router) {
-		r.Use(auth.Middleware(cfg.JWTSecret))
+		r.Use(auth.Middleware(cfg.JWTSecret, func(ctx context.Context, userID uuid.UUID) (bool, bool, error) {
+			user, err := s.Store.GetUserByID(ctx, userID)
+			if err != nil {
+				return false, false, err
+			}
+			if user == nil {
+				return false, false, fmt.Errorf("user not found")
+			}
+			return user.IsVIP, user.Shadowbanned, nil
+		}))
 
 		// Profile
 		r.Get("/api/profile", s.GetProfileHandler)
@@ -149,9 +161,21 @@ func NewServer(cfg *config.Config, store *db.Store) *Server {
 		// Stripe Checkout (creates payment session)
 		r.Post("/api/checkout", s.CreateCheckoutHandler)
 
-		// E2EE Key Backup
+		// E2EE Key Backup (legacy RSA — kept for backward compat)
 		r.Get("/api/key-backup", s.GetKeyBackupHandler)
 		r.Put("/api/key-backup", s.SaveKeyBackupHandler)
+
+		// PQXDH Pre-Key Bundle (new post-quantum Signal protocol)
+		r.Post("/api/keys/upload", s.UploadPreKeysHandler)
+		r.Get("/api/keys/fetch/{userId}", s.FetchPreKeyBundleHandler)
+
+		// Master History Key (MHK) encrypted cloud history
+		r.Post("/api/history/push", s.PushHistoryHandler)
+		r.Get("/api/history/{conversationId}", s.GetHistoryHandler)
+
+		// 12-word mnemonic recovery blob
+		r.Put("/api/recovery/blob", s.SaveRecoveryBlobHandler)
+		r.Get("/api/recovery/blob", s.GetRecoveryBlobHandler)
 
 		// Account management
 		r.Delete("/api/account/delete", s.DeleteAccountHandler)
