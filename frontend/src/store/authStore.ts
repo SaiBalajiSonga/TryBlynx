@@ -18,6 +18,9 @@ export interface UserProfile {
   language?: string;
   interests?: string[];
   public_key?: string;
+  // Non-secret salt used to derive the Master History Key (MHK)
+  // stored in the user profile so any device can derive the same MHK from password
+  mhk_salt?: string;
 }
 
 interface AuthState {
@@ -31,8 +34,8 @@ interface AuthState {
 // FIX: Persist token + user to localStorage so refresh doesn't log out
 function loadPersistedAuth(): { token: string | null; user: UserProfile | null } {
   try {
-    const token = localStorage.getItem('tryblynx_token');
-    const userRaw = localStorage.getItem('tryblynx_user');
+    const token = localStorage.getItem('lynxus_token');
+    const userRaw = localStorage.getItem('lynxus_user');
     if (token && userRaw) {
       return { token, user: JSON.parse(userRaw) };
     }
@@ -47,18 +50,20 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: persisted.user,
 
   setAuth: (token, user) => {
-    localStorage.setItem('tryblynx_token', token);
-    localStorage.setItem('tryblynx_user', JSON.stringify(user));
+    localStorage.setItem('lynxus_token', token);
+    localStorage.setItem('lynxus_user', JSON.stringify(user));
     set({ token, user });
   },
   updateUser: (updatedFields) => set((state) => {
     const user = state.user ? { ...state.user, ...updatedFields } : null;
-    if (user) localStorage.setItem('tryblynx_user', JSON.stringify(user));
+    if (user) localStorage.setItem('lynxus_user', JSON.stringify(user));
     return { user };
   }),
   clearAuth: () => {
-    localStorage.removeItem('tryblynx_token');
-    localStorage.removeItem('tryblynx_user');
+    localStorage.removeItem('lynxus_token');
+    localStorage.removeItem('lynxus_user');
+    // Clear the in-memory Master History Key so it cannot be read after logout
+    import('../lib/crypto').then(c => c.clearSessionMHK());
     set({ token: null, user: null });
   },
 }));
