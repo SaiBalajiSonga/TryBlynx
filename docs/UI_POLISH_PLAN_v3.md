@@ -1,4 +1,4 @@
-# TryBlynx — The Grand UI Polish (v3)
+# Lynxus — The Grand UI Polish (v3)
 
 Target users: 18–40, meeting strangers via random text/video chat. This
 version folds in three fixes from the v2 review: in-call safety UX gets
@@ -9,7 +9,7 @@ between Phase 4 and Phase 5 instead of only at the very end.
 
 ## What This Plan Does
 
-Transform TryBlynx from a "backend-first prototype" into a polished,
+Transform Lynxus from a "backend-first prototype" into a polished,
 installable, cross-platform app — phone, tablet, desktop, website and
 PWA — that feels fast, looks distinct, and earns trust in the first ten
 seconds, especially in the moment that matters most for this product:
@@ -32,9 +32,9 @@ doesn't make them feel worse than before.
 > honesty has to extend past the landing page into the moment a stranger
 > actually shows up — that's the real trust test, not the homepage copy.
 
-### Why TryBlynx is different (vs Omegle/Emerald Chat)
+### Why Lynxus is different (vs Omegle/Emerald Chat)
 
-| | Omegle (RIP) | Emerald Chat | **TryBlynx** |
+| | Omegle (RIP) | Emerald Chat | **Lynxus** |
 |---|---|---|---|
 | Safety | None | Basic reporting | AI moderation + shadowbanning + E2EE + **in-call report/block (see Phase 0)** |
 | Privacy | IP-exposed | Account required | Anonymous guest mode + E2EE by default |
@@ -117,7 +117,7 @@ doesn't make them feel worse than before.
 
 ---
 
-## Phase 1 — The TryBlynx Color Identity
+## Phase 1 — The Lynxus Color Identity
 
 #### The Name "Blynx"
 
