@@ -48,6 +48,9 @@ type Config struct {
 	// Default: 24.
 	JWTExpiryHours int
 
+	// SupabaseURL is used for fetching JWKS for ES256/RS256 keys
+	SupabaseURL string
+
 	// ── Stripe ───────────────────────────────────────────────
 	// StripeSecretKey is the Stripe API secret key (sk_test_... or sk_live_...).
 	StripeSecretKey string
@@ -83,7 +86,7 @@ func Load() (*Config, error) {
 		DatabaseURL:         getEnv("DATABASE_URL", ""),
 		RedisURL:            getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		JWTSecret:           getEnv("JWT_SECRET", ""),
-		JWTExpiryHours:      getEnvInt("JWT_EXPIRY_HOURS", 24),
+		SupabaseURL:         getEnv("SUPABASE_URL", ""),
 		StripeSecretKey:     getEnv("STRIPE_SECRET_KEY", ""),
 		StripeWebhookSecret: getEnv("STRIPE_WEBHOOK_SECRET", ""),
 		CoturnSecret:        getEnv("COTURN_SECRET", ""),
