@@ -35,18 +35,19 @@ import (
 	"syscall"
 	"time"
 
-	"tryblynx/internal/api"
-	"tryblynx/internal/config"
-	"tryblynx/internal/db"
-	"tryblynx/internal/matchmaker"
-	redisclient "tryblynx/internal/redisclient"
-	"tryblynx/internal/worker"
-	"tryblynx/internal/ws"
+	"lynxus/internal/api"
+	"lynxus/internal/config"
+	"lynxus/internal/db"
+	"lynxus/internal/matchmaker"
+	redisclient "lynxus/internal/redisclient"
+	"lynxus/internal/worker"
+	"lynxus/internal/ws"
+	"lynxus/internal/auth"
 )
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("═══ TryBlynx Server Starting ═══")
+	log.Println("═══ Lynxus Server Starting ═══")
 
 	// ── 1. Load Configuration ────────────────────────────────
 	cfg, err := config.Load()
@@ -54,6 +55,12 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 	log.Printf("config: loaded (port=%s, jwt_expiry=%dh)", cfg.ServerPort, cfg.JWTExpiryHours)
+
+	if err := auth.InitJWKS(cfg.SupabaseURL); err != nil {
+		log.Printf("auth: warning: failed to init JWKS (ES256 auth may fail): %v", err)
+	} else {
+		log.Printf("auth: JWKS initialized successfully for ES256/RS256 tokens")
+	}
 
 	// ── 2. Connect to Redis ──────────────────────────────────
 	rdb, err := redisclient.NewClient(cfg.RedisURL)
@@ -112,7 +119,7 @@ func main() {
 
 	// ── 9. Start Server (non-blocking) ───────────────────────
 	go func() {
-		log.Printf("═══ TryBlynx Server listening on :%s ═══", cfg.ServerPort)
+		log.Printf("═══ Lynxus Server listening on :%s ═══", cfg.ServerPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}
@@ -144,5 +151,5 @@ func main() {
 	// Step 4: PostgreSQL pool is closed by defer
 	// Step 5: Redis client is closed by defer
 
-	log.Println("═══ TryBlynx Server stopped cleanly ═══")
+	log.Println("═══ Lynxus Server stopped cleanly ═══")
 }
