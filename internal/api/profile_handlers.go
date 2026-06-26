@@ -22,8 +22,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"tryblynx/internal/auth"
-	"tryblynx/internal/models"
+	"lynxus/internal/auth"
+	"lynxus/internal/models"
 )
 
 // toPublicUser converts a full models.User into the safe cross-user projection.
@@ -42,7 +42,6 @@ func toPublicUser(u *models.User) models.PublicUser {
 		IsAdmin:     u.IsAdmin,
 		IsModerator: u.IsModerator,
 		IsDeveloper: u.IsDeveloper,
-		IsAnonymous: u.IsAnonymous,
 		CreatedAt:   u.CreatedAt,
 	}
 }
