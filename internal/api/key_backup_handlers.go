@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"tryblynx/internal/auth"
+	"lynxus/internal/auth"
 )
 
 // SaveKeyBackupHandler handles PUT /api/key-backup.
