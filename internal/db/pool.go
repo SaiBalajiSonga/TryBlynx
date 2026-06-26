@@ -20,7 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"tryblynx/internal/config"
+	"lynxus/internal/config"
 )
 
 // NewPool creates a new PostgreSQL connection pool configured
