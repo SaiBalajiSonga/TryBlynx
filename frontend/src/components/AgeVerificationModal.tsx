@@ -89,7 +89,7 @@ export function AgeVerificationModal() {
           lineHeight: 1.5,
           fontSize: '15px'
         }}>
-          Based on your location, we are required by law to verify that you are at least 18 years of age before you can access TryBlynx.
+          Based on your location, we are required by law to verify that you are at least 18 years of age before you can access Lynxus.
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
