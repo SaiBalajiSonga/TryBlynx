@@ -15,6 +15,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -23,7 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"tryblynx/internal/models"
+	"lynxus/internal/models"
 )
 
 // Store wraps a PostgreSQL connection pool and a Redis client, providing typed
@@ -101,21 +102,22 @@ func scanUser(row pgx.Row) (*models.User, error) {
 //
 // Parameters:
 //   - ctx:          Request context for cancellation/timeout.
+//   - id:           The user's UUID (from Supabase Auth).
 //   - username:     Unique username (3-32 characters).
 //   - email:        Unique email address (lowercased by caller).
-//   - passwordHash:        bcrypt hash of the user's password.
+//   - passwordHash:        Placeholder password hash (empty string or legacy hash).
 //   - publicKey:           E2EE public key.
 //   - encryptedPrivateKey: E2EE private key encrypted with password-derived AES key.
 //
 // Returns:
 //   - *models.User: The newly created user with all default values populated.
 //   - error:        Non-nil on duplicate key violation or connection failure.
-func (s *Store) CreateUser(ctx context.Context, username, email, passwordHash, publicKey, encryptedPrivateKey string) (*models.User, error) {
+func (s *Store) CreateUser(ctx context.Context, id uuid.UUID, username, email, passwordHash, publicKey, encryptedPrivateKey string) (*models.User, error) {
 	row := s.Pool.QueryRow(ctx, `
-		INSERT INTO users (username, email, password_hash, public_key, encrypted_private_key)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO users (id, username, email, password_hash, public_key, encrypted_private_key)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING `+userColumns,
-		username, email, passwordHash, publicKey, encryptedPrivateKey,
+		id, username, email, passwordHash, publicKey, encryptedPrivateKey,
 	)
 	return scanUser(row)
 }
@@ -151,6 +153,25 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*models.User,
 func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*models.User, error) {
 	row := s.Pool.QueryRow(ctx,
 		`SELECT `+userColumns+` FROM users WHERE id = $1`, id)
+	user, err := scanUser(row)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return user, err
+}
+
+// GetUserByUsername retrieves a user by their exact username (case-insensitive in PostgreSQL via citext or ILIKE).
+//
+// Parameters:
+//   - ctx: Request context.
+//   - username: The username to look up.
+//
+// Returns:
+//   - *models.User: The matching user, or nil if not found.
+//   - error:        Non-nil only on database errors.
+func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
+	row := s.Pool.QueryRow(ctx,
+		`SELECT `+userColumns+` FROM users WHERE username = $1`, username)
 	user, err := scanUser(row)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -1641,4 +1662,238 @@ func (s *Store) DeleteUser(ctx context.Context, userID uuid.UUID) error {
 	}
 
 	return tx.Commit(ctx)
+}
+
+// ══════════════════════════════════════════════════════════════
+// PQXDH PRE-KEY BUNDLE OPERATIONS
+// ══════════════════════════════════════════════════════════════
+
+// RegisterDevice creates a new device entry for the user and returns its ID.
+// Called during login or when a new browser/app instance is first used.
+func (s *Store) RegisterDevice(ctx context.Context, userID uuid.UUID, label string) (uuid.UUID, error) {
+	var deviceID uuid.UUID
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO user_devices (user_id, device_label)
+		VALUES ($1, $2)
+		RETURNING id
+	`, userID, label).Scan(&deviceID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("db: register device: %w", err)
+	}
+	return deviceID, nil
+}
+
+// UpsertPreKeyBundle saves or replaces the signed pre-key for a device.
+// identityKey and spk are base64-encoded X25519 public keys.
+// spkSignature is the EdDSA signature of the SPK by the identity key.
+func (s *Store) UpsertPreKeyBundle(ctx context.Context, deviceID uuid.UUID, identityKey, spk string, spkID int, spkSignature string) error {
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO user_prekeys (device_id, identity_key, spk, spk_id, spk_signature, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (device_id) DO UPDATE
+		  SET identity_key  = EXCLUDED.identity_key,
+		      spk           = EXCLUDED.spk,
+		      spk_id        = EXCLUDED.spk_id,
+		      spk_signature = EXCLUDED.spk_signature,
+		      updated_at    = NOW()
+	`, deviceID, identityKey, spk, spkID, spkSignature)
+	if err != nil {
+		return fmt.Errorf("db: upsert prekey bundle: %w", err)
+	}
+	return nil
+}
+
+// InsertOneTimeKeys bulk-inserts a batch of X25519 one-time pre-keys for a device.
+// keys is a slice of (key_id, public_key) pairs.
+func (s *Store) InsertOneTimeKeys(ctx context.Context, deviceID uuid.UUID, keys []models.OneTimeKey) error {
+	for _, k := range keys {
+		_, err := s.Pool.Exec(ctx, `
+			INSERT INTO user_otkeys (device_id, key_id, public_key)
+			VALUES ($1, $2, $3)
+			ON CONFLICT DO NOTHING
+		`, deviceID, k.KeyID, k.PublicKey)
+		if err != nil {
+			return fmt.Errorf("db: insert otkey: %w", err)
+		}
+	}
+	return nil
+}
+
+// InsertPQKeys bulk-inserts a batch of ML-KEM-768 post-quantum one-time keys.
+func (s *Store) InsertPQKeys(ctx context.Context, deviceID uuid.UUID, keys []models.OneTimeKey) error {
+	for _, k := range keys {
+		_, err := s.Pool.Exec(ctx, `
+			INSERT INTO user_pqkeys (device_id, key_id, public_key)
+			VALUES ($1, $2, $3)
+			ON CONFLICT DO NOTHING
+		`, deviceID, k.KeyID, k.PublicKey)
+		if err != nil {
+			return fmt.Errorf("db: insert pqkey: %w", err)
+		}
+	}
+	return nil
+}
+
+// GetPreKeyBundle fetches the key bundle for a user's device.
+// It atomically claims (deletes) one OTK and one PQK from their pools,
+// returning them for use in a single PQXDH handshake. If no OTK/PQK
+// is available, those fields will be empty — the sender must fall back
+// to the SPK alone (still secure, just without one-time forward secrecy).
+func (s *Store) GetPreKeyBundle(ctx context.Context, recipientUserID uuid.UUID) (*models.PreKeyBundle, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("db: get prekey bundle begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Fetch the latest device + signed pre-key for the recipient
+	var bundle models.PreKeyBundle
+	err = tx.QueryRow(ctx, `
+		SELECT d.id, pk.identity_key, pk.spk, pk.spk_id, pk.spk_signature
+		FROM user_devices d
+		JOIN user_prekeys pk ON pk.device_id = d.id
+		WHERE d.user_id = $1
+		ORDER BY pk.updated_at DESC
+		LIMIT 1
+	`, recipientUserID).Scan(
+		&bundle.DeviceID,
+		&bundle.IdentityKey,
+		&bundle.SignedPreKey,
+		&bundle.SignedPreKeyID,
+		&bundle.SignedPreKeySignature,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db: no prekey bundle found for user: %w", err)
+	}
+
+	// Claim (consume) one OTK atomically — DELETE and return
+	var otkID int
+	var otkKey string
+	err = tx.QueryRow(ctx, `
+		DELETE FROM user_otkeys
+		WHERE id = (
+			SELECT id FROM user_otkeys
+			WHERE device_id = $1
+			ORDER BY created_at ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING key_id, public_key
+	`, bundle.DeviceID).Scan(&otkID, &otkKey)
+	if err != nil && err != pgx.ErrNoRows {
+		return nil, fmt.Errorf("db: claim otkey: %w", err)
+	}
+	bundle.OneTimeKeyID = otkID
+	bundle.OneTimeKey = otkKey
+
+	// Claim (consume) one PQK atomically — DELETE and return
+	var pqkID int
+	var pqkKey string
+	err = tx.QueryRow(ctx, `
+		DELETE FROM user_pqkeys
+		WHERE id = (
+			SELECT id FROM user_pqkeys
+			WHERE device_id = $1
+			ORDER BY created_at ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING key_id, public_key
+	`, bundle.DeviceID).Scan(&pqkID, &pqkKey)
+	if err != nil && err != pgx.ErrNoRows {
+		return nil, fmt.Errorf("db: claim pqkey: %w", err)
+	}
+	bundle.PQKeyID = pqkID
+	bundle.PQKey = pqkKey
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("db: get prekey bundle commit: %w", err)
+	}
+	return &bundle, nil
+}
+
+// ══════════════════════════════════════════════════════════════
+// MASTER HISTORY KEY (MHK) HISTORY OPERATIONS
+// ══════════════════════════════════════════════════════════════
+
+// PushMHKHistoryEntry upserts one encrypted history entry for a user.
+// The ciphertext (ct) is opaque to the server — only the owning user's
+// device can decrypt it using their locally-derived Master History Key.
+func (s *Store) PushMHKHistoryEntry(ctx context.Context, ownerID, conversationID, messageID uuid.UUID, iv, ct string, sentAt time.Time) error {
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO mhk_history (owner_id, conversation_id, message_id, iv, ct, sent_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (owner_id, message_id) DO NOTHING
+	`, ownerID, conversationID, messageID, iv, ct, sentAt)
+	if err != nil {
+		return fmt.Errorf("db: push mhk history: %w", err)
+	}
+	return nil
+}
+
+// GetMHKHistory retrieves paginated encrypted history entries for a user's
+// conversation, ordered newest-first. The cursor is a sent_at timestamp.
+// Clients decrypt on-the-fly as they receive entries.
+func (s *Store) GetMHKHistory(ctx context.Context, ownerID, conversationID uuid.UUID, cursor time.Time, limit int) ([]models.MHKHistoryEntry, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT message_id, iv, ct, sent_at
+		FROM mhk_history
+		WHERE owner_id = $1
+		  AND conversation_id = $2
+		  AND sent_at < $3
+		ORDER BY sent_at DESC
+		LIMIT $4
+	`, ownerID, conversationID, cursor, limit)
+	if err != nil {
+		return nil, fmt.Errorf("db: get mhk history: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []models.MHKHistoryEntry
+	for rows.Next() {
+		var e models.MHKHistoryEntry
+		if err := rows.Scan(&e.MessageID, &e.IV, &e.CT, &e.SentAt); err != nil {
+			return nil, fmt.Errorf("db: scan mhk history entry: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	if entries == nil {
+		entries = []models.MHKHistoryEntry{}
+	}
+	return entries, rows.Err()
+}
+
+// SaveRecoveryBlob stores the mnemonic-encrypted MHK recovery blob for a user.
+func (s *Store) SaveRecoveryBlob(ctx context.Context, userID uuid.UUID, blob string) error {
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO user_recovery_blobs (user_id, blob, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (user_id) DO UPDATE
+		  SET blob = EXCLUDED.blob,
+		      updated_at = NOW()
+	`, userID, blob)
+	if err != nil {
+		return fmt.Errorf("db: save recovery blob: %w", err)
+	}
+	return nil
+}
+
+// GetRecoveryBlob retrieves the mnemonic-encrypted MHK recovery blob.
+func (s *Store) GetRecoveryBlob(ctx context.Context, userID uuid.UUID) (string, error) {
+	var blob string
+	err := s.Pool.QueryRow(ctx, `
+		SELECT COALESCE(blob, '')
+		FROM user_recovery_blobs
+		WHERE user_id = $1
+	`, userID).Scan(&blob)
+	if err == pgx.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("db: get recovery blob: %w", err)
+	}
+	return blob, nil
 }
