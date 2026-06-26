@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
 // File:         internal/models/models.go
-// Purpose:      Domain model definitions for the TryBlynx platform
+// Purpose:      Domain model definitions for the Lynxus platform
 // Dependencies: github.com/google/uuid, time
 // Role:         Central type definitions shared across all packages.
 //               These structs map directly to PostgreSQL tables and
@@ -226,4 +226,41 @@ type ProfileReview struct {
 	// Joined fields populated by query
 	UserUsername string `json:"user_username,omitempty"`
 	UserAvatar   string `json:"user_avatar,omitempty"`
+}
+
+// ──────────────────────────────────────────────────────────────
+// PQXDH Pre-Key Bundle Models
+// ──────────────────────────────────────────────────────────────
+
+// OneTimeKey is a single entry in the one-time key pool (X25519 or ML-KEM-768).
+type OneTimeKey struct {
+	KeyID     int    `json:"key_id"`
+	PublicKey string `json:"public_key"` // base64
+}
+
+// PreKeyBundle is the full set of public material a sender fetches
+// to initiate a PQXDH session with a recipient device.
+type PreKeyBundle struct {
+	DeviceID             uuid.UUID `json:"device_id"`
+	IdentityKey          string    `json:"identity_key"`           // base64 X25519 IK
+	SignedPreKey         string    `json:"signed_pre_key"`         // base64 X25519 SPK
+	SignedPreKeyID       int       `json:"signed_pre_key_id"`
+	SignedPreKeySignature string   `json:"signed_pre_key_signature"` // base64 Ed25519 sig
+	OneTimeKeyID         int       `json:"one_time_key_id,omitempty"`
+	OneTimeKey           string    `json:"one_time_key,omitempty"`   // base64 X25519 OTK
+	PQKeyID              int       `json:"pq_key_id,omitempty"`
+	PQKey                string    `json:"pq_key,omitempty"`         // base64 ML-KEM-768
+}
+
+// ──────────────────────────────────────────────────────────────
+// Master History Key (MHK) History Models
+// ──────────────────────────────────────────────────────────────
+
+// MHKHistoryEntry is a single row from the mhk_history table.
+// The server returns it opaque; the client decrypts ct using its MHK.
+type MHKHistoryEntry struct {
+	MessageID uuid.UUID `json:"message_id"`
+	IV        string    `json:"iv"`     // base64 AES-GCM nonce (12 bytes)
+	CT        string    `json:"ct"`     // base64 AES-GCM ciphertext
+	SentAt    time.Time `json:"sent_at"`
 }
