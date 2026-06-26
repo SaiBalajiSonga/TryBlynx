@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// api.ts — Typed REST client for all TryBlynx API endpoints
+// api.ts — Typed REST client for all Lynxus API endpoints
 // ─────────────────────────────────────────────────────────────
 import { useAuthStore } from '../store/authStore';
 
@@ -26,8 +26,13 @@ export async function fetchWithAuth(endpoint: string, options: RequestInit = {})
 
 export const api = {
   // ── Auth ────────────────────────────────────────────────────
-  guestLogin: () =>
-    fetch(`${API_URL}/guest`, { method: 'POST' }).then(r => r.json()),
+  checkUsername: async (username: string): Promise<{available: boolean, suggestions?: string[]}> => {
+    const response = await fetch(`${API_URL}/auth/check-username?username=${encodeURIComponent(username)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error || 'Failed to check username');
+    return data;
+  },
+
 
   // ── Profile ─────────────────────────────────────────────────
   getProfile: () => fetchWithAuth('/profile'),
@@ -137,3 +142,49 @@ export const getKeyBackup = () => fetchWithAuth('/key-backup');
 // Account deletion
 export const deleteAccountApi = () =>
   fetchWithAuth('/account/delete', { method: 'DELETE' });
+
+// ── PQXDH Pre-Key Bundle ─────────────────────────────────────────────────────
+// Upload this device's key bundle so peers can initiate PQXDH sessions.
+export const uploadPreKeys = (data: {
+  device_label: string;
+  identity_key: string;
+  signed_pre_key: string;
+  signed_pre_key_id: number;
+  signed_pre_key_sig: string;
+  one_time_keys: Array<{ key_id: number; public_key: string }>;
+  pq_keys: Array<{ key_id: number; public_key: string }>;
+}) =>
+  fetchWithAuth('/keys/upload', { method: 'POST', body: JSON.stringify(data) });
+
+// Fetch a peer's key bundle to initiate a PQXDH handshake with them.
+export const fetchPreKeyBundle = (userId: string) =>
+  fetchWithAuth(`/keys/fetch/${encodeURIComponent(userId)}`);
+
+// ── Master History Key (MHK) Cloud History ───────────────────────────────────
+// Push one MHK-encrypted message copy to the cloud for cross-device history.
+export const pushHistory = (entry: {
+  conversation_id: string;
+  message_id: string;
+  iv: string;
+  ct: string;
+  sent_at: string; // ISO-8601
+}) =>
+  fetchWithAuth('/history/push', { method: 'POST', body: JSON.stringify(entry) });
+
+// Fetch paginated MHK-encrypted history for a conversation.
+// cursor: ISO-8601 timestamp (only messages before this are returned)
+export const getHistory = (conversationId: string, cursor?: string) =>
+  fetchWithAuth(
+    cursor
+      ? `/history/${encodeURIComponent(conversationId)}?cursor=${encodeURIComponent(cursor)}`
+      : `/history/${encodeURIComponent(conversationId)}`,
+  );
+
+// ── 12-Word Mnemonic Recovery Blob ──────────────────────────────────────────
+// Save the mnemonic-encrypted MHK blob (called once at signup).
+export const saveRecoveryBlob = (blob: string) =>
+  fetchWithAuth('/recovery/blob', { method: 'PUT', body: JSON.stringify({ blob }) });
+
+// Fetch the recovery blob (used during Scenario B password recovery).
+export const getRecoveryBlob = () => fetchWithAuth('/recovery/blob');
+
