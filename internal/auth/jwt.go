@@ -3,7 +3,7 @@
 // Purpose:      JWT token generation and validation (HMAC-SHA256)
 // Dependencies: github.com/golang-jwt/jwt/v5, github.com/google/uuid
 // Role:         Provides stateless authentication tokens for the
-//               TryBlynx platform. Tokens carry the user's identity,
+//               Lynxus platform. Tokens carry the user's identity,
 //               VIP status, and shadowban flag in custom claims.
 //               Used by:
 //               - api/auth_handlers.go (generation after login/register)
@@ -15,86 +15,55 @@ package auth
 
 import (
 	"fmt"
-	"time"
+	"sync"
 
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
-// Claims represents the custom JWT claims for TryBlynx.
-//
-// Fields:
-//   - UserID:       The authenticated user's UUID (also stored in Subject).
-//   - IsVIP:        Whether the user has an active VIP subscription.
-//   - Shadowbanned: Whether the user is shadowbanned (used by the
-//     matchmaker to isolate them into the shadow pool).
-//   - IsAnonymous:  Whether the token belongs to a guest (ephemeral) account.
-//     Guest accounts have limited access — they cannot send friend requests,
-//     DMs, post to the feed, or update their profile.
-//
-// The RegisteredClaims embed provides standard fields: sub, iss,
-// iat, exp. The token is signed with HS256.
+var (
+	jwksCache keyfunc.Keyfunc
+	jwksInit  sync.Once
+)
+
+// InitJWKS initializes the JWKS cache by fetching keys from Supabase
+func InitJWKS(supabaseURL string) error {
+	var initErr error
+	jwksInit.Do(func() {
+		jwksURL := fmt.Sprintf("%s/auth/v1/.well-known/jwks.json", supabaseURL)
+		k, err := keyfunc.NewDefault([]string{jwksURL})
+		if err != nil {
+			initErr = fmt.Errorf("failed to create JWKS from %s: %w", jwksURL, err)
+			return
+		}
+		jwksCache = k
+	})
+	return initErr
+}
+
+// Claims represents the custom JWT claims for Lynxus.
+// Under Supabase Auth, the user's UUID is stored in the standard Subject ("sub") claim,
+// and the email is stored in the "email" claim.
 type Claims struct {
 	jwt.RegisteredClaims
-	UserID       uuid.UUID `json:"uid"`
-	IsVIP        bool      `json:"vip"`
-	Shadowbanned bool      `json:"sb"`
-	IsAnonymous  bool      `json:"anon,omitempty"`
+	Email  string    `json:"email"`
+	UserID uuid.UUID `json:"-"` // Extracted from Subject ("sub") post-parsing
 }
 
-// GenerateToken creates a new signed JWT for the given user.
-//
-// Parameters:
-//   - secret:       The HMAC-SHA256 signing key (from config.JWTSecret).
-//   - userID:       The user's UUID to embed in claims.
-//   - isVIP:        Current VIP status of the user.
-//   - shadowbanned: Current shadowban status of the user.
-//   - isAnonymous:  Whether this is a guest (ephemeral) account.
-//   - expiryHours:  Token lifetime in hours (from config.JWTExpiryHours).
-//
-// Returns:
-//   - string: The compact-serialized JWT string (header.payload.signature).
-//   - error:  Non-nil if signing fails (should not happen with valid key).
-func GenerateToken(secret string, userID uuid.UUID, isVIP, shadowbanned, isAnonymous bool, expiryHours int) (string, error) {
-	now := time.Now()
-
-	claims := Claims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   userID.String(),
-			Issuer:    "tryblynx",
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(expiryHours) * time.Hour)),
-		},
-		UserID:       userID,
-		IsVIP:        isVIP,
-		Shadowbanned: shadowbanned,
-		IsAnonymous:  isAnonymous,
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString([]byte(secret))
-	if err != nil {
-		return "", fmt.Errorf("auth: failed to sign token: %w", err)
-	}
-
-	return signed, nil
-}
-
-// ValidateToken parses a JWT string, verifies the HMAC-SHA256
-// signature, checks expiration, and extracts the custom claims.
-//
-// Parameters:
-//   - secret:   The HMAC-SHA256 signing key (must match the key
-//     used in GenerateToken).
-//   - tokenStr: The compact-serialized JWT to validate.
-//
-// Returns:
-//   - *Claims: The extracted and validated claims.
-//   - error:   Non-nil if the token is malformed, expired, uses
-//     an unexpected signing method, or has an invalid signature.
+// ValidateToken parses a JWT string, verifies the signature using the cached JWKS
+// (or falls back to HMAC-SHA256 if the token is old), checks expiration, and extracts claims.
 func ValidateToken(secret, tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (interface{}, error) {
-		// Enforce signing method to prevent algorithm-switching attacks
+		// If Supabase has migrated to ES256/RS256, use JWKS
+		if t.Method.Alg() != "HS256" {
+			if jwksCache == nil {
+				return nil, fmt.Errorf("auth: JWKS not initialized for %v", t.Method.Alg())
+			}
+			return jwksCache.Keyfunc(t)
+		}
+		
+		// Fallback for legacy HS256 tokens
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("auth: unexpected signing method: %v", t.Header["alg"])
 		}
@@ -108,6 +77,16 @@ func ValidateToken(secret, tokenStr string) (*Claims, error) {
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("auth: invalid token claims")
 	}
+
+	// Extract and parse UserID from Subject ("sub")
+	if claims.Subject == "" {
+		return nil, fmt.Errorf("auth: missing subject claim")
+	}
+	uid, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return nil, fmt.Errorf("auth: invalid subject UUID: %w", err)
+	}
+	claims.UserID = uid
 
 	return claims, nil
 }
