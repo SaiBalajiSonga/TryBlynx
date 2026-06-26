@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, MessageCircle, Shield, Globe, ArrowRight } from 'lucide-react';
+import { MessageCircle, Shield, Globe, ArrowRight } from 'lucide-react';
+import { LynxLogo } from './LynxLogo';
 
 export function LandingPage() {
   const navigate = useNavigate();
@@ -24,10 +25,8 @@ export function LandingPage() {
         borderBottom: '1px solid rgba(255,255,255,0.05)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ background: 'var(--accent)', borderRadius: '12px', padding: '8px', boxShadow: '0 0 20px var(--accent-glow)' }}>
-            <Zap size={24} color="white" fill="white" />
-          </div>
-          <span style={{ fontSize: '24px', fontWeight: 800, letterSpacing: '-0.5px' }}>TryBlynx</span>
+          <LynxLogo size={40} />
+          <span style={{ fontSize: '24px', fontWeight: 800, letterSpacing: '-0.5px' }}>Lynxus</span>
         </div>
         <button 
           onClick={() => navigate('/auth')}
@@ -71,7 +70,7 @@ export function LandingPage() {
         alignItems: 'center',
         color: 'var(--text-muted)'
       }}>
-        <div style={{ fontSize: '14px' }}>© 2026 TryBlynx. All rights reserved.</div>
+        <div style={{ fontSize: '14px' }}>© 2026 Lynxus. All rights reserved.</div>
         <div style={{ display: 'flex', gap: '24px', fontSize: '14px' }}>
           <span onClick={() => navigate('/terms')} style={{ cursor: 'pointer' }} onMouseEnter={e => e.currentTarget.style.color='white'} onMouseLeave={e => e.currentTarget.style.color='var(--text-muted)'}>Terms of Service</span>
           <span onClick={() => navigate('/privacy')} style={{ cursor: 'pointer' }} onMouseEnter={e => e.currentTarget.style.color='white'} onMouseLeave={e => e.currentTarget.style.color='var(--text-muted)'}>Privacy Policy</span>
