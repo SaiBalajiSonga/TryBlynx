@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"tryblynx/internal/auth"
+	"lynxus/internal/auth"
 )
 
 type blockRequest struct {
