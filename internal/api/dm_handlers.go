@@ -23,9 +23,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"tryblynx/internal/models"
+	"lynxus/internal/models"
 
-	"tryblynx/internal/auth"
+	"lynxus/internal/auth"
 )
 
 // sendDMRequest defines the JSON body for POST /api/dm/send.
@@ -115,12 +115,6 @@ func (s *Server) SendDMHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if recipient == nil {
 		respondError(w, http.StatusNotFound, "recipient not found")
-		return
-	}
-
-	// ── Block anonymous (guest) senders via JWT claim — no DB hit ──
-	if auth.IsAnonymousFromContext(r.Context()) {
-		respondError(w, http.StatusForbidden, "guest accounts cannot send direct messages")
 		return
 	}
 
