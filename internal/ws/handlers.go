@@ -37,7 +37,7 @@ import (
 	"log"
 	"time"
 
-	"tryblynx/internal/models"
+	"lynxus/internal/models"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -558,13 +558,6 @@ func handleDMMessage(c *Client, payload json.RawMessage) {
 	}
 
 	ctx := context.Background()
-
-	// Block anonymous users from sending DMs via WS — check JWT claim on
-	// Client (no DB hit). Populated from claims.IsAnonymous in upgrader.go.
-	if c.IsAnonymous {
-		c.sendError("guest accounts cannot send direct messages")
-		return
-	}
 
 	// Friendship gate — only friends can DM.
 	// Uses Redis-cached result (60s TTL) to avoid a full DB round-trip
