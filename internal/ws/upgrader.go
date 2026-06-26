@@ -34,11 +34,11 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"tryblynx/internal/auth"
+	"lynxus/internal/auth"
 )
 
 // wsUpgrader is the gorilla/websocket upgrader configured for
-// the TryBlynx platform.
+// the Lynxus platform.
 //
 // Buffer sizes:
 //   - ReadBufferSize:  4096 bytes (WebSocket frame buffer)
@@ -143,21 +143,15 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		displayName = "User"
 	}
 
-	// Cross-check IsAnonymous against the DB for tokens issued before the
-	// 'anon' claim was added. A legacy guest token will have IsAnonymous=false
-	// from the JWT (zero value), but the DB record has is_anonymous=true.
-	// Trust the DB on this field to prevent legacy guest tokens from bypassing
-	// social feature gates.
-	isAnonymous := claims.IsAnonymous || user.IsAnonymous
-
+	// Under Supabase Auth, we load the user's latest status flags (VIP, shadowban, anonymous)
+	// directly from the database record retrieved in Step 3.
 	client := &Client{
 		Hub:          h,
 		Conn:         conn,
 		UserID:       claims.UserID,
 		Username:     displayName,
-		IsVIP:        claims.IsVIP,
-		Shadowbanned: claims.Shadowbanned,
-		IsAnonymous:  isAnonymous,
+		IsVIP:        user.IsVIP,
+		Shadowbanned: user.Shadowbanned,
 		Send:         make(chan []byte, sendChannelSize),
 		joinedRooms:  make(map[string]bool),
 	}
@@ -172,5 +166,5 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	go client.ReadPump()
 
 	log.Printf("ws-upgrade: ✓ user %s (%s) connected [VIP: %v, SB: %v]",
-		claims.UserID, user.Username, claims.IsVIP, claims.Shadowbanned)
+		claims.UserID, user.Username, user.IsVIP, user.Shadowbanned)
 }
