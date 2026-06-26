@@ -20,8 +20,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"tryblynx/internal/auth"
-	"tryblynx/internal/models"
+	"lynxus/internal/auth"
+	"lynxus/internal/models"
 )
 
 // createFeedPostRequest defines the JSON body for POST /api/feed.
