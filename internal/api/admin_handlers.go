@@ -7,7 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"tryblynx/internal/auth"
+	"lynxus/internal/auth"
 )
 
 type AdminGroupRequest struct {
