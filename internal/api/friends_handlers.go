@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
 // File:         internal/api/friends_handlers.go
-// Purpose:      Friend system, notifications, guest auth, StartDM,
+// Purpose:      Friend system, notifications, StartDM,
 //               and moderator profile review endpoints
 // ═══════════════════════════════════════════════════════════════
 
@@ -16,14 +16,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"tryblynx/internal/auth"
-	"tryblynx/internal/ws"
+	"lynxus/internal/auth"
+	"lynxus/internal/ws"
 )
-
-// ══════════════════════════════════════════════════════════════
-// GUEST / ANONYMOUS LOGIN
-// ══════════════════════════════════════════════════════════════
-
 
 // ══════════════════════════════════════════════════════════════
 // START DM (friendship-gated)
@@ -47,12 +42,6 @@ func (s *Server) StartDMHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if recipientID == callerID {
 		respondError(w, http.StatusBadRequest, "cannot start a DM with yourself")
-		return
-	}
-
-	// Block anonymous users from DMing — checked via JWT claim (no DB hit)
-	if auth.IsAnonymousFromContext(r.Context()) {
-		respondError(w, http.StatusForbidden, "guest accounts cannot send direct messages")
 		return
 	}
 
@@ -94,12 +83,6 @@ type friendActionRequest struct {
 // SendFriendRequestHandler handles POST /api/friends/request.
 func (s *Server) SendFriendRequestHandler(w http.ResponseWriter, r *http.Request) {
 	callerID := auth.UserIDFromContext(r.Context())
-
-	// Block anonymous users — checked via JWT claim (no DB hit)
-	if auth.IsAnonymousFromContext(r.Context()) {
-		respondError(w, http.StatusForbidden, "guest accounts cannot send friend requests")
-		return
-	}
 
 	var req friendActionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
