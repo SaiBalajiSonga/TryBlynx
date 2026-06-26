@@ -1,5 +1,6 @@
 import { MessageSquare, Video, Users } from 'lucide-react';
 
+
 interface HomeProps {
   onNavigate: (tab: 'text-chat' | 'video-chat' | 'groups') => void;
 }
@@ -13,7 +14,7 @@ export function Home({ onNavigate }: HomeProps) {
       <div style={{ maxWidth: '900px', width: '100%' }}>
         <div style={{ marginBottom: '40px', textAlign: 'center' }}>
           <h1 style={{ fontSize: '32px', fontWeight: 700, margin: '0 0 12px', color: 'white' }}>
-            Welcome to <span style={{ color: 'var(--accent)' }}>TryBlynx</span>
+            Welcome to <span style={{ color: 'var(--accent)' }}>Lynxus</span>
           </h1>
           <p style={{ fontSize: '16px', color: 'var(--text-secondary)', margin: 0 }}>
             Connect with people globally. Choose how you want to interact today.
