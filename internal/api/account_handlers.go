@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"tryblynx/internal/auth"
+	"lynxus/internal/auth"
 )
 
 // DeleteAccountHandler handles DELETE /api/account/delete.
