@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
 # File:     Dockerfile
-# Purpose:  Multi-stage Docker build for the TryBlynx Go server
+# Purpose:  Multi-stage Docker build for the Lynxus Go server
 # Role:     Produces a minimal (~15MB) scratch-based container
 #           with only the statically-linked Go binary. No shell,
 #           no OS, no attack surface.
@@ -12,8 +12,8 @@
 #      certificates for HTTPS (Stripe API) and a non-root user.
 #
 # Usage:
-#   docker build -t tryblynx .
-#   docker run --env-file .env -p 8080:8080 tryblynx
+#   docker build -t lynxus .
+#   docker run --env-file .env -p 8080:8080 lynxus
 # ═══════════════════════════════════════════════════════════════
 
 # ── Stage 1: Build ────────────────────────────────────────────
@@ -43,7 +43,7 @@ RUN go mod tidy
 # -trimpath: Remove filesystem paths from binary (security)
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -ldflags="-s -w" -trimpath \
-    -o /build/tryblynx ./cmd/server
+    -o /build/lynxus ./cmd/server
 
 # ── Stage 2: Final Image ─────────────────────────────────────
 FROM scratch
@@ -52,7 +52,7 @@ FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy the compiled binary
-COPY --from=builder /build/tryblynx /tryblynx
+COPY --from=builder /build/lynxus /lynxus
 
 # Copy migration files (for volume mounting or init containers)
 COPY --from=builder /build/db /db
@@ -64,4 +64,4 @@ EXPOSE 8080
 USER 65534
 
 # Start the server
-ENTRYPOINT ["/tryblynx"]
+ENTRYPOINT ["/lynxus"]
