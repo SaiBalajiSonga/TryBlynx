@@ -1,6 +1,6 @@
 -- ═══════════════════════════════════════════════════════════════
 -- Migration 001: Users table
--- Core identity store for TryBlynx
+-- Core identity store for Lynxus
 -- ═══════════════════════════════════════════════════════════════
 
 -- Enable UUID generation
