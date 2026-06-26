@@ -38,7 +38,7 @@ import (
 	checksession "github.com/stripe/stripe-go/v81/checkout/session"
 	"github.com/stripe/stripe-go/v81/webhook"
 
-	"tryblynx/internal/auth"
+	"lynxus/internal/auth"
 )
 
 // maxWebhookPayload is the maximum allowed size (in bytes) for a
@@ -168,7 +168,7 @@ func (s *Server) handleCheckoutCompleted(w http.ResponseWriter, r *http.Request,
 //
 // Checkout configuration:
 //   - Mode:    One-time payment (not subscription).
-//   - Product: "TryBlynx VIP" at $9.99 USD.
+//   - Product: "Lynxus VIP" at $9.99 USD.
 //   - Success: Redirects to {origin}/success?session_id=...
 //   - Cancel:  Redirects to {origin}/cancel
 //
@@ -199,7 +199,7 @@ func (s *Server) CreateCheckoutHandler(w http.ResponseWriter, r *http.Request) {
 				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
 					Currency: stripe.String("usd"),
 					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-						Name:        stripe.String("TryBlynx VIP"),
+						Name:        stripe.String("Lynxus VIP"),
 						Description: stripe.String("Unlock premium features: gender-filtered matching, priority queue placement"),
 					},
 					UnitAmount: stripe.Int64(999), // $9.99 in cents
