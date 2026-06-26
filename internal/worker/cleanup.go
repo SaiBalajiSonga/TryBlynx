@@ -5,12 +5,11 @@ import (
 	"log"
 	"time"
 
-	"tryblynx/internal/db"
+	"lynxus/internal/db"
 )
 
 // StartCleanupWorker starts a background goroutine that periodically:
 //   - Trims group chats to keep only the latest 1000 messages (hourly)
-//   - Purges expired anonymous/guest user accounts (hourly)
 func StartCleanupWorker(store *db.Store) {
 	go func() {
 		log.Println("worker: cleanup worker started")
@@ -20,11 +19,9 @@ func StartCleanupWorker(store *db.Store) {
 
 		// Run both immediately on boot
 		cleanupOldMessages(store)
-		purgeExpiredGuests(store)
 
 		for range hourlyTicker.C {
 			cleanupOldMessages(store)
-			purgeExpiredGuests(store)
 		}
 	}()
 }
@@ -55,17 +52,3 @@ func cleanupOldMessages(store *db.Store) {
 	}
 }
 
-// purgeExpiredGuests deletes anonymous accounts past their 24h expiry.
-func purgeExpiredGuests(store *db.Store) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cmd, err := store.Pool.Exec(ctx, `DELETE FROM users WHERE is_anonymous = true AND expires_at < NOW()`)
-	if err != nil {
-		log.Printf("worker: failed to purge expired guests: %v", err)
-		return
-	}
-	if n := cmd.RowsAffected(); n > 0 {
-		log.Printf("worker: purged %d expired guest accounts", n)
-	}
-}
