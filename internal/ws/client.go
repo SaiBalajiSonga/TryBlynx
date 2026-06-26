@@ -102,10 +102,6 @@ type Client struct {
 	// Shadowbanned indicates quarantine status (from JWT claims).
 	Shadowbanned bool
 
-	// IsAnonymous indicates this is a guest/ephemeral account (from JWT claims).
-	// Used to gate DMs, friend requests, and other social features without a DB hit.
-	IsAnonymous bool
-
 	// Send is the outbound message channel. The Hub writes
 	// serialized JSON messages here; WritePump drains them to
 	// the WebSocket. Closing this channel signals WritePump to exit.
