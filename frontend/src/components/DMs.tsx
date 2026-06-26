@@ -1,17 +1,63 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, MoreVertical, Phone, Video, Loader, MessageSquare, Lock, Smile, Image as ImageIcon, StickyNote, Reply, Edit2, Copy, Trash2, X } from 'lucide-react';
 import { api } from '../lib/api';
+import {
+  fetchPreKeyBundle, pushHistory, getHistory,
+} from '../lib/api';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
 import { useUIStore } from '../store/uiStore';
 import {
+  // Legacy v1 RSA (backward compat)
   generateKeyPair, exportPublicKey, exportPrivateKeyToJwk,
   encryptMessage, decryptMessage, decryptMessageUnknownSender, isEncrypted,
   storePrivateKey, loadPrivateKey,
+  // v2 PQXDH + Double Ratchet
+  generateX25519KeyPair, generateMLKEMKeyPair,
+  pqxdhSenderHandshake,
+  initSenderRatchet, initRecipientRatchet,
+  ratchetEncrypt, ratchetDecrypt, isRatchetMessage,
+  saveRatchetState, loadRatchetState,
+  // MHK cloud history
+  getSessionMHK, encryptForHistory, decryptFromHistory,
 } from '../lib/crypto';
 import { getSendMessage } from '../lib/useWebSocket';
 import { usePresenceStore } from '../store/presenceStore';
+
+// ── v2 Session helpers ───────────────────────────────────────────────────────
+// Persist v2 identity keys (X25519) per user in localStorage
+const IK_PUB_KEY  = (uid: string) => `blynx_ik_pub_${uid}`;
+const IK_PRIV_KEY = (uid: string) => `blynx_ik_priv_${uid}`;
+const PQ_PUB_KEY  = (uid: string) => `blynx_pq_pub_${uid}`;
+const PQ_PRIV_KEY = (uid: string) => `blynx_pq_priv_${uid}`;
+
+async function ensureV2Keys(userId: string) {
+  let ikPub  = localStorage.getItem(IK_PUB_KEY(userId));
+  let ikPriv = localStorage.getItem(IK_PRIV_KEY(userId));
+  if (!ikPub || !ikPriv) {
+    const kp = await generateX25519KeyPair();
+    localStorage.setItem(IK_PUB_KEY(userId),  kp.publicKey);
+    localStorage.setItem(IK_PRIV_KEY(userId), JSON.stringify(kp.privateKey));
+    ikPub  = kp.publicKey;
+    ikPriv = JSON.stringify(kp.privateKey);
+  }
+  let pqPub  = localStorage.getItem(PQ_PUB_KEY(userId));
+  let pqPriv = localStorage.getItem(PQ_PRIV_KEY(userId));
+  if (!pqPub || !pqPriv) {
+    const kp = generateMLKEMKeyPair();
+    localStorage.setItem(PQ_PUB_KEY(userId),  kp.publicKey);
+    localStorage.setItem(PQ_PRIV_KEY(userId), kp.privateKey);
+    pqPub  = kp.publicKey;
+    pqPriv = kp.privateKey;
+  }
+  return {
+    ikPub:  ikPub!,
+    ikPriv: JSON.parse(ikPriv!) as JsonWebKey,
+    pqPub:  pqPub!,
+    pqPriv: pqPriv!,
+  };
+}
 
 // Stable fallback — prevents Zustand getSnapshot infinite loop
 const EMPTY_WS_MSGS: import('../store/chatStore').DMMessage[] = [];
@@ -46,6 +92,10 @@ export function DMs() {
   const typingSentRef = useRef(false);
   // Guard to prevent repeated refetch on peer_public_key race
   const keyRefetchInFlightRef = useRef(false);
+  // Tracks which conversations have had their MHK history loaded (prevent double-fetch)
+  const mhkLoadedRef = useRef<Set<string>>(new Set());
+  // Tracks which v2 ratchet sessions have been initiated
+  const ratchetInitRef = useRef<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -68,38 +118,66 @@ export function DMs() {
     }
   };
 
-  // ── Step 1: Ensure this user has a keypair ────────────────────────────────
-  // Mirrors Instagram's approach: on first DM open, generate RSA keypair,
-  // store privkey in localStorage (never sent to server), upload pubkey.
+  // ── Step 1: Ensure this user has both v1 (RSA) and v2 (X25519+MLKEM) keypairs ─
   useEffect(() => {
     if (!user) return;
     const init = async () => {
+      // --- Legacy v1 RSA (still needed for decrypting old messages) ---
       const existingPriv = loadPrivateKey(user.id);
-      if (user.public_key) {
-        if (!existingPriv) {
-           console.warn('[E2EE] Public key exists but private key is missing from local storage. Cannot decrypt old messages.');
+      if (!user.public_key) {
+        try {
+          if (!window.crypto?.subtle) {
+            console.error('[E2EE] Secure context required for crypto.');
+          } else {
+            const kp  = await generateKeyPair();
+            const pub = await exportPublicKey(kp.publicKey);
+            const priv = await exportPrivateKeyToJwk(kp.privateKey);
+            storePrivateKey(user.id, priv);
+            await api.updateProfile({ ...user, public_key: pub });
+            updateUser({ public_key: pub });
+          }
+        } catch (err) {
+          console.error('[E2EE v1] Key generation failed:', err);
         }
-        setE2eeReady(true);
-        return;
+      } else if (!existingPriv) {
+        console.warn('[E2EE v1] Public key on server but local private key missing.');
       }
+
+      // --- v2 PQXDH: ensure X25519 identity + ML-KEM-768 one-time keys exist ---
       try {
-        if (!window.crypto || !window.crypto.subtle) {
-          console.error('[E2EE] window.crypto.subtle is unavailable. Are you using HTTP instead of HTTPS on a network IP? E2EE requires a secure context.');
-          setE2eeReady(true);
-          return;
-        }
-        const kp = await generateKeyPair();
-        const pub = await exportPublicKey(kp.publicKey);
-        const priv = await exportPrivateKeyToJwk(kp.privateKey);
-        storePrivateKey(user.id, priv);
-        await api.updateProfile({ ...user, public_key: pub });
-        updateUser({ public_key: pub });
-        setE2eeReady(true);
+        const { ikPub, pqPub } = await ensureV2Keys(user.id);
+        // Upload a pre-key bundle (10 OTKs + 5 PQ keys) in background
+        // Uses random key_ids to avoid collision; real production would track these
+        const otKeys = await Promise.all(
+          Array.from({ length: 10 }, async (_, i) => {
+            const kp = await generateX25519KeyPair();
+            return { key_id: Date.now() + i, public_key: kp.publicKey };
+          })
+        );
+        const pqKeys = Array.from({ length: 5 }, (_, i) => {
+          const kp = generateMLKEMKeyPair();
+          return { key_id: Date.now() + 100 + i, public_key: kp.publicKey };
+        });
+        // Fire-and-forget: upload pre-key bundle to server
+        fetchPreKeyBundle(user.id).catch(() => {
+          // Bundle not yet uploaded — upload now
+          import('../lib/api').then(({ uploadPreKeys }) =>
+            uploadPreKeys({
+              device_label: `${navigator.platform || 'Browser'} — ${new Date().toLocaleDateString()}`,
+              identity_key: ikPub,
+              signed_pre_key: ikPub, // Use IK as SPK for simplicity (production: separate SPK)
+              signed_pre_key_id: 1,
+              signed_pre_key_sig: '', // Signature verification omitted for brevity
+              one_time_keys: otKeys,
+              pq_keys: pqKeys,
+            }).catch(e => console.warn('[PQ] Pre-key upload failed:', e))
+          );
+        });
       } catch (err) {
-        console.error('[E2EE] Key generation failed:', err);
-        // Still allow using DMs in plaintext fallback
-        setE2eeReady(true);
+        console.warn('[E2EE v2] PQXDH key setup failed (falling back to v1):', err);
       }
+
+      setE2eeReady(true);
     };
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,7 +206,10 @@ export function DMs() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  // ── Step 3: Load + decrypt message history when conversation changes ──────
+  // ── Step 3: Load message history when conversation changes ──────────────
+  // Strategy:
+  //   1. Try MHK cloud history first (instant, zero-knowledge, cross-device)
+  //   2. Fall back to server-stored RSA ciphertexts for old v1 messages
   useEffect(() => {
     if (!id || !user || !e2eeReady) return;
     setMessages([]);
@@ -136,18 +217,59 @@ export function DMs() {
 
     const fetchAndDecrypt = async () => {
       try {
-        const res = await api.getDMMessages(id);
-        // Backend returns newest-first; reverse for chronological display
-        const msgs: any[] = (res.messages || []).slice().reverse();
-        const privJwk = loadPrivateKey(user.id);
+        const mhk = getSessionMHK();
+        let decrypted: any[] = [];
 
-        const decrypted = await Promise.all(msgs.map(async m => {
-          const mid = m.message_id || m.id;
-          if (!isEncrypted(m.body)) return { ...m, message_id: mid };
-          if (!privJwk) return { ...m, message_id: mid, body: '🔒 Missing key' };
-          const plain = await decryptMessage(m.body, privJwk, m.sender_id === user.id);
-          return { ...m, message_id: mid, body: plain, _encrypted: true };
-        }));
+        // ── Path A: MHK cloud history (v2) ──────────────────────────────────
+        if (mhk && !mhkLoadedRef.current.has(id)) {
+          mhkLoadedRef.current.add(id);
+          try {
+            const histRes = await getHistory(id);
+            const entries: any[] = histRes?.entries || [];
+            // Entries arrive newest-first from server; decrypt + reverse for display
+            const mhkDecrypted = await Promise.all(
+              entries.map(async (e: any) => {
+                try {
+                  const body = await decryptFromHistory(e.iv, e.ct, mhk);
+                  return { message_id: e.message_id, body, created_at: e.sent_at, _mhk: true };
+                } catch {
+                  return null; // corrupt entry — skip
+                }
+              })
+            );
+            decrypted = mhkDecrypted.filter(Boolean).reverse();
+          } catch (err) {
+            console.warn('[MHK] History fetch failed, falling back to v1:', err);
+          }
+        }
+
+        // ── Path B: Legacy v1 RSA fallback (for messages before v2 rollout) ─
+        if (decrypted.length === 0) {
+          const res = await api.getDMMessages(id);
+          const msgs: any[] = (res.messages || []).slice().reverse();
+          const privJwk = loadPrivateKey(user.id);
+
+          decrypted = await Promise.all(msgs.map(async (m: any) => {
+            const mid = m.message_id || m.id;
+            // v2 ratchet message
+            if (isRatchetMessage(m.body)) {
+              const state = loadRatchetState(id);
+              if (state) {
+                try {
+                  const { plaintext, updatedState } = await ratchetDecrypt(m.body, state);
+                  saveRatchetState(id, updatedState);
+                  return { ...m, message_id: mid, body: plaintext, _v2: true };
+                } catch { /* out-of-order or missing state */ }
+              }
+              return { ...m, message_id: mid, body: '🔒 E2EE message (session not found)' };
+            }
+            // v1 RSA message
+            if (!isEncrypted(m.body)) return { ...m, message_id: mid };
+            if (!privJwk) return { ...m, message_id: mid, body: '🔒 Missing key' };
+            const plain = await decryptMessage(m.body, privJwk, m.sender_id === user.id);
+            return { ...m, message_id: mid, body: plain, _encrypted: true };
+          }));
+        }
 
         setMessages(decrypted);
       } catch (err) {
@@ -197,22 +319,53 @@ export function DMs() {
 
     setMessages(prev => {
       const mid = latest.message_id || (latest as any).id;
-      if (prev.some(m => (m.message_id || (m as any).id) === mid)) return prev; // already present
+      if (prev.some(m => (m.message_id || (m as any).id) === mid)) return prev;
 
-      // Decrypt async then re-set
       const privJwk = loadPrivateKey(user.id);
       (async () => {
         let body = latest.body;
         let encrypted = false;
-        if (isEncrypted(latest.body) && privJwk) {
+
+        // ── v2 Double Ratchet decrypt ──────────────────────────────────────
+        if (isRatchetMessage(latest.body)) {
+          const state = loadRatchetState(id!);
+          if (state) {
+            try {
+              const { plaintext, updatedState } = await ratchetDecrypt(latest.body, state);
+              saveRatchetState(id!, updatedState);
+              body = plaintext;
+              encrypted = true;
+            } catch (e) {
+              console.warn('[Ratchet] Decrypt failed on incoming WS msg:', e);
+              body = '🔒 Out-of-order message';
+            }
+          } else {
+            body = '🔒 No ratchet session (refresh to establish)';
+          }
+        } else if (isEncrypted(latest.body) && privJwk) {
+          // ── v1 RSA fallback ──────────────────────────────────────────────
           body = await decryptMessage(latest.body, privJwk, latest.sender_id === user.id);
           encrypted = true;
         }
+
+        // Push MHK-encrypted copy to cloud history for cross-device sync
+        const mhk = getSessionMHK();
+        if (mhk && mid && body && !body.startsWith('🔒')) {
+          try {
+            const { iv, ct } = await encryptForHistory(body, mhk);
+            pushHistory({
+              conversation_id: latest.conversation_id || id!,
+              message_id: mid,
+              iv, ct,
+              sent_at: latest.created_at || new Date().toISOString(),
+            }).catch(() => {}); // fire-and-forget
+          } catch { /* MHK not available, skip */ }
+        }
+
         setMessages(p => {
           if (p.some(m => m.message_id === mid)) return p;
           return [...p, { ...latest, message_id: mid, body, _encrypted: encrypted }];
         });
-        // Bug #1 fix: Update sidebar preview in real-time when a new message arrives
         setDms(prev => prev.map(c =>
           c.id === latest.conversation_id
             ? { ...c, last_message: body.startsWith('{') ? 'Encrypted message' : body, last_message_at: latest.created_at, last_message_sender_id: latest.sender_id }
@@ -220,7 +373,7 @@ export function DMs() {
         ));
       })();
 
-      return prev; // optimistic no-op until async completes
+      return prev;
     });
 
     // If peer sent a message, clear the typing indicator immediately
@@ -345,27 +498,76 @@ export function DMs() {
     typingSentRef.current = false;
     const sendMessage = getSendMessage();
 
-    // Try to encrypt; fall back to plaintext if either party has no pubkey
+    // ── Try v2 Double Ratchet encryption first ──────────────────────────────
     let body = textToSend;
-    const myPub = user.public_key;
-    const peerPub = activeChat.peer_public_key;
+    let plaintextForHistory = textToSend;
+    let usedRatchet = false;
 
-    if (myPub && peerPub) {
+    const ratchetState = loadRatchetState(id!);
+    if (ratchetState) {
       try {
-        body = await encryptMessage(textToSend, myPub, peerPub);
+        const { ciphertext, updatedState } = await ratchetEncrypt(textToSend, ratchetState);
+        saveRatchetState(id!, updatedState);
+        body = ciphertext;
+        usedRatchet = true;
       } catch (err) {
-        console.error('[E2EE] Encrypt failed, falling back to plaintext:', err);
-        body = textToSend;
+        console.warn('[Ratchet] Encrypt failed, attempting PQXDH init:', err);
+      }
+    }
+
+    // ── If no ratchet state: run PQXDH handshake to establish session ────────
+    if (!usedRatchet && !ratchetInitRef.current.has(id!)) {
+      ratchetInitRef.current.add(id!);
+      try {
+        const { ikPriv, ikPub } = await ensureV2Keys(user.id);
+        const bundle = await fetchPreKeyBundle(activeChat.peer_id);
+        if (bundle?.identity_key) {
+          const { rootKey, handshakeInit } = await pqxdhSenderHandshake(
+            ikPriv, ikPub,
+            {
+              identityKey:          bundle.identity_key,
+              signedPreKey:         bundle.signed_pre_key,
+              signedPreKeyID:       bundle.signed_pre_key_id,
+              oneTimeKey:           bundle.one_time_key || '',
+              oneTimeKeyID:         bundle.one_time_key_id || 0,
+              pqKey:                bundle.pq_key || '',
+              pqKeyID:              bundle.pq_key_id || 0,
+            }
+          );
+          const initState = await initSenderRatchet(rootKey, bundle.signed_pre_key);
+          saveRatchetState(id!, initState);
+          // Retry encrypt with freshly initialised ratchet
+          const { ciphertext, updatedState } = await ratchetEncrypt(textToSend, initState);
+          saveRatchetState(id!, updatedState);
+          body = JSON.stringify({ _pqxdh: handshakeInit, _msg: ciphertext });
+          usedRatchet = true;
+        }
+      } catch (err) {
+        console.warn('[PQXDH] Handshake failed, falling back to v1 RSA:', err);
+      }
+    }
+
+    // ── v1 RSA fallback (if no v2 ratchet available) ──────────────────────────
+    if (!usedRatchet) {
+      const myPub = user.public_key;
+      const peerPub = activeChat.peer_public_key;
+      if (myPub && peerPub) {
+        try {
+          body = await encryptMessage(textToSend, myPub, peerPub);
+        } catch (err) {
+          console.error('[E2EE v1] Encrypt failed, sending plaintext:', err);
+          body = textToSend;
+        }
       }
     }
 
     if (sendMessage) {
       if (editingMessage) {
-        sendMessage('dm.edit', { 
-          recipient_id: activeChat.peer_id, 
-          conversation_id: id, 
-          message_id: editingMessage.message_id, 
-          body 
+        sendMessage('dm.edit', {
+          recipient_id: activeChat.peer_id,
+          conversation_id: id,
+          message_id: editingMessage.message_id,
+          body,
         });
         setEditingMessage(null);
       } else {
@@ -375,6 +577,21 @@ export function DMs() {
           setReplyingToMessage(null);
         }
         sendMessage('dm.message', payload);
+
+        // Push MHK-encrypted copy to cloud for cross-device history
+        const mhk = getSessionMHK();
+        if (mhk) {
+          const sentAt = new Date().toISOString();
+          // Use a temporary UUID-ish ID until the server echoes the real one
+          const tempId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+          encryptForHistory(plaintextForHistory, mhk)
+            .then(({ iv, ct }) => pushHistory({
+              conversation_id: id!,
+              message_id: tempId,
+              iv, ct, sent_at: sentAt,
+            }))
+            .catch(() => {}); // fire-and-forget
+        }
       }
     } else {
       console.error('[DMs] WebSocket not connected');
@@ -544,7 +761,7 @@ export function DMs() {
             {(!window.crypto || !window.crypto.subtle) && (
               <div style={{ padding: '8px 16px', background: 'rgba(239,68,68,0.04)', borderBottom: '1px solid rgba(239,68,68,0.08)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'rgba(239,68,68,0.8)', flexShrink: 0 }}>
                 <Lock size={11} />
-                End-to-end encryption is disabled. TryBlynx is running in an insecure context (HTTP). Please access via HTTPS or localhost.
+                End-to-end encryption is disabled. Lynxus is running in an insecure context (HTTP). Please access via HTTPS or localhost.
               </div>
             )}
 
